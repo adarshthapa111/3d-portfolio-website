@@ -1,0 +1,337 @@
+:root {
+  --bg: #0b0b12;
+  --fg: #f7f3ea;
+  --muted: #a9abc4;
+  --cream: #e9dfca; /* warm narrative text — matches the vintage world */
+  --accent: #f0b455; /* warm gold accent */
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden; /* never allow sideways scroll on any device */
+  -webkit-text-size-adjust: 100%;
+}
+
+/* The 3D canvas sits fixed behind everything. */
+.webgl {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  outline: none;
+  z-index: 0;
+  touch-action: pan-y; /* let vertical scroll pass through, still allow taps */
+}
+
+/* Overlay text scrolls in front of the canvas. */
+.overlay {
+  position: relative;
+  z-index: 1;
+}
+
+.panel {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(1.5rem, 6vw, 8rem);
+  /* let clicks fall through to the canvas (for raycasting) except on text/links */
+  pointer-events: none;
+}
+
+.panel * {
+  pointer-events: auto;
+}
+
+.panel.align-left {
+  align-items: flex-start;
+  text-align: left;
+}
+
+.panel.align-right {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.panel-content {
+  /* min() so the box never grows wider than the screen — otherwise the huge
+     h1 (whose ch unit scales with its font) pushes the name off-screen. */
+  max-width: min(40ch, 88vw);
+}
+
+/* A dark outline (via layered shadows) keeps the light text readable over both
+   dark space and bright interior rooms — no background card needed. The name
+   (h1) keeps its own gradient + soft shadow, unchanged. */
+.panel-content h2,
+.panel-content p,
+.panel-content .lead,
+.panel-content .tagline,
+.panel-content .eyebrow,
+.panel-content .chapter {
+  text-shadow:
+    0 0 3px rgba(0, 0, 0, 0.85),
+    0 1px 2px rgba(0, 0, 0, 0.95),
+    0 3px 22px rgba(0, 0, 0, 0.7);
+}
+
+/* Small uppercase label ("Hi, I'm") with a little accent rule. */
+.eyebrow,
+.chapter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+
+.eyebrow::before,
+.chapter::before {
+  content: '';
+  width: 34px;
+  height: 1px;
+  background: var(--accent);
+  opacity: 0.8;
+}
+
+h1 {
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 900;
+  font-size: clamp(2.4rem, 8vw, 5.5rem);
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: 0.1em 0 0.2em;
+  padding: 0.12em 0.06em 0.18em; /* room so tall glyphs aren't clipped */
+  overflow: visible;
+  overflow-wrap: break-word; /* wrap instead of overflowing the screen */
+  background: linear-gradient(110deg, #fff 10%, #ffe6bd 45%, var(--accent) 90%);
+  background-size: 220% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 8px 40px rgba(0, 0, 0, 0.45);
+  animation: shimmer 9s ease-in-out infinite alternate;
+}
+
+@keyframes shimmer {
+  from { background-position: 0% center; }
+  to { background-position: 100% center; }
+}
+
+h2 {
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 700;
+  font-style: italic;
+  font-size: clamp(2rem, 6vw, 3.6rem);
+  line-height: 1.05;
+  margin: 0.4em 0 0.5em;
+  color: var(--fg);
+  text-shadow: 0 6px 30px rgba(0, 0, 0, 0.45);
+}
+
+.lead {
+  color: var(--fg);
+  font-size: clamp(1.05rem, 2.6vw, 1.5rem);
+  font-weight: 500;
+}
+
+.tagline {
+  color: var(--cream);
+  font-style: italic;
+  font-family: 'Fraunces', Georgia, serif;
+  font-size: clamp(1rem, 2.2vw, 1.3rem);
+  margin-top: 0.4rem;
+}
+
+p {
+  max-width: 34ch;
+  color: var(--cream);
+  font-family: 'Fraunces', Georgia, serif;
+  font-weight: 400;
+  line-height: 1.7;
+  font-size: clamp(1.1rem, 2.3vw, 1.4rem);
+  letter-spacing: 0.005em;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.55);
+}
+
+.align-right .panel-content {
+  margin-left: auto;
+}
+
+.align-right .eyebrow,
+.align-right .chapter {
+  flex-direction: row-reverse;
+}
+
+/* Scroll-reveal: elements rise + fade in when their panel enters view. */
+.reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition:
+    opacity 0.9s cubic-bezier(0.2, 0.7, 0.2, 1),
+    transform 0.9s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.panel.is-visible .reveal {
+  opacity: 1;
+  transform: none;
+}
+
+.panel-content .reveal:nth-child(2) { transition-delay: 0.1s; }
+.panel-content .reveal:nth-child(3) { transition-delay: 0.2s; }
+.panel-content .reveal:nth-child(4) { transition-delay: 0.3s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; transition: none; }
+  h1 { animation: none; }
+}
+
+.project-list {
+  list-style: none;
+  margin-top: 1rem;
+  max-width: 40ch;
+}
+
+.project-list li {
+  color: var(--muted);
+  padding: 0.4rem 0;
+}
+
+.project-list strong {
+  color: var(--fg);
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.links a {
+  color: var(--fg);
+  text-decoration: none;
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 2px;
+  transition: opacity 0.2s;
+}
+
+.links a:hover {
+  opacity: 0.7;
+}
+
+/* Loading screen */
+#loading {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  transition: opacity 0.8s ease;
+}
+
+#loading.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loading-label {
+  color: var(--muted);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+}
+
+.loading-track {
+  width: 220px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+#loading-bar {
+  width: 100%;
+  height: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.25s ease;
+}
+
+/* Prompt shown inside the house ("Click a door to enter" / "…to go back") */
+.room-hint {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  color: var(--cream);
+  font-size: 0.82rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  background: rgba(18, 14, 10, 0.5);
+  padding: 0.6rem 1.3rem;
+  border-radius: 999px;
+  border: 1px solid rgba(240, 180, 85, 0.25);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.room-hint.is-visible {
+  opacity: 1;
+}
+
+/* White flash that hides the space -> surface scene swap */
+#transition-fade {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  background: #ffffff;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.scroll-hint {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  color: var(--muted);
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  animation: bob 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes bob {
+  0%, 100% { transform: translateX(-50%) translateY(0); opacity: 0.8; }
+  50% { transform: translateX(-50%) translateY(6px); opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-hint { animation: none; }
+  html { scroll-behavior: auto; }
+}

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Adarsh Thapa — Frontend Developer. An immersive 3D portfolio built with Three.js."
+    />
+
+    <!-- Fonts: Fraunces (characterful display serif) + Inter (clean UI sans) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..900;1,9..144,500..900&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <title>Adarsh Thapa — 3D Portfolio</title>
+  </head>
+  <body>
+    <!-- Loading screen, hidden once assets finish loading. -->
+    <div id="loading">
+      <p class="loading-label">Entering orbit…</p>
+      <div class="loading-track"><div id="loading-bar"></div></div>
+    </div>
+
+    <!-- White flash used to hide the space -> surface scene swap. -->
+    <div id="transition-fade"></div>
+
+    <!-- The single 3D canvas. Everything is rendered here. -->
+    <canvas class="webgl"></canvas>
+
+    <!-- Scroll hint shown on load -->
+    <div class="scroll-hint">scroll to explore ↓</div>
+
+    <!--
+      HTML overlay. Each <section> is one screen tall, so together they
+      create the page's scroll height. The canvas stays fixed behind them
+      while scrolling drives the 3D camera (see Navigation.ts).
+    -->
+    <main class="overlay">
+      <section class="panel" data-section="intro">
+        <div class="panel-content">
+          <p class="eyebrow reveal">Hi, I'm</p>
+          <h1 class="reveal">Adarsh Thapa</h1>
+          <p class="lead reveal">Frontend Developer</p>
+          <p class="tagline reveal">A journey from the stars to my world.</p>
+        </div>
+      </section>
+
+      <section class="panel align-left" data-section="solar">
+        <div class="panel-content">
+          <span class="chapter reveal">Chapter I</span>
+          <h2 class="reveal">The Solar System</h2>
+          <p class="reveal">
+            Keep scrolling. We're travelling inward, past the planets, toward one
+            small blue world.
+          </p>
+        </div>
+      </section>
+
+      <section class="panel align-right" data-section="earth">
+        <div class="panel-content">
+          <span class="chapter reveal">Chapter II</span>
+          <h2 class="reveal">Approaching Earth</h2>
+          <p class="reveal">
+            Home. Hold on — we're about to dive straight through the clouds…
+          </p>
+        </div>
+      </section>
+
+      <section class="panel" data-section="surface">
+        <div class="panel-content">
+          <span class="chapter reveal">Chapter III</span>
+          <h2 class="reveal">Thapa Colony</h2>
+          <p class="reveal">
+            We break through the clouds and the ship glides in over my family's
+            little colony…
+          </p>
+        </div>
+      </section>
+
+      <section class="panel align-right" data-section="colony">
+        <div class="panel-content">
+          <span class="chapter reveal">Almost Home</span>
+          <h2 class="reveal">Down the Street</h2>
+          <p class="reveal">
+            Past every family home — Sabitra, Sandeep, Sangita — all the way to
+            the house at the end of the road, where it lands.
+          </p>
+        </div>
+      </section>
+
+      <section class="panel align-left" data-section="welcome">
+        <div class="panel-content">
+          <span class="chapter reveal">Inside</span>
+          <h2 class="reveal">Welcome In</h2>
+          <p class="reveal">
+            I'm Adarsh — a Frontend Developer from Kathmandu. You're standing in
+            the hall of my home.
+          </p>
+        </div>
+      </section>
+
+      <section class="panel align-right" data-section="rooms">
+        <div class="panel-content">
+          <span class="chapter reveal">Explore</span>
+          <h2 class="reveal">Three Doors</h2>
+          <p class="reveal">
+            Click a locked door to step inside — my work room on the left, my
+            projects ahead, my room on the right.
+          </p>
+          <nav class="links reveal">
+            <a href="https://github.com/Adarsh2003Thapa" target="_blank" rel="noopener">GitHub</a>
+            <a href="https://adarshthapa.com.np/" target="_blank" rel="noopener">Portfolio</a>
+          </nav>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
