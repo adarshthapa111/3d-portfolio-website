@@ -46,12 +46,31 @@ const TECH = [
   'nodejs', 'firebase', 'supabase', 'figma', 'html5', 'css3',
 ]
 
+// Adarsh's favourite fighters, shown in the About Me room.
+const FIGHTERS: { name: string; nick: string; flag: string; img: string }[] = [
+  { name: 'Khabib', nick: 'The Eagle · 29-0', flag: '🇷🇺', img: 'khabib' },
+  { name: 'Islam Makhachev', nick: 'The Dagestani', flag: '🇷🇺', img: 'islam' },
+  { name: 'Conor McGregor', nick: 'The Notorious', flag: '🇮🇪', img: 'conor' },
+  { name: 'Jon Jones', nick: 'Bones', flag: '🇺🇸', img: 'jonjones' },
+  { name: 'Ilia Topuria', nick: 'El Matador', flag: '🇬🇪', img: 'ilia' },
+]
+
+const DOOR_LABELS: Record<'reading' | 'projects' | 'bedroom', string> = {
+  reading: 'Skills',
+  projects: 'Projects',
+  bedroom: 'About Me',
+}
+
+// Fonts for the canvas-drawn labels (match the site: Fraunces display + Inter).
+const SERIF = "'Fraunces', Georgia, 'Times New Roman', serif"
+const SANS = "'Inter', system-ui, -apple-system, sans-serif"
+
 // Camera position + lookAt for each ROOM (relative to INTERIOR_ORIGIN). The hub
 // uses HUB_CAM and free mouse-look so you can turn to see all three doors.
 const HUB_CAM = new THREE.Vector3(0, 7.5, 7)
 const VIEWS: Record<'reading' | 'projects' | 'bedroom', { pos: THREE.Vector3; look: THREE.Vector3 }> = {
   reading: { pos: new THREE.Vector3(-24, 7, 0), look: new THREE.Vector3(-45, 6, 0) },
-  projects: { pos: new THREE.Vector3(0, 7, -22), look: new THREE.Vector3(0, 7, -45) },
+  projects: { pos: new THREE.Vector3(0, 7, -17), look: new THREE.Vector3(0, 7, -42) },
   bedroom: { pos: new THREE.Vector3(24, 7, 0), look: new THREE.Vector3(45, 6, 0) },
 }
 
@@ -66,11 +85,13 @@ export default class Interior {
   private doorTargets: THREE.Mesh[] = []
   private techTargets: THREE.Mesh[] = []
   private techIcons: THREE.Group[] = []
+  private showcase: { group: THREE.Group; phase: number }[] = []
   private doors: DoorInfo[] = []
   private portrait: { group: THREE.Group; baseY: number } | null = null
   private hoveredProject: THREE.Mesh | null = null
   private spots: THREE.SpotLight[] = []
   private shadowPrimed = false
+  private textRedraws: (() => void)[] = [] // re-run when web fonts finish loading
 
   private focus: Focus = 'hub'
   private camPos = new THREE.Vector3()
@@ -90,9 +111,11 @@ export default class Interior {
     this.createShell()
     this.createLights()
     this.createDoors()
+    this.createDoorSigns()
     this.createHub()
     this.createProjects()
     this.createTech()
+    this.createAboutRoom()
 
     const resources = this.experience.resources
     if (Object.keys(resources.models).length) this.furnish()
@@ -100,6 +123,12 @@ export default class Interior {
 
     window.addEventListener('pointermove', (e) => this.onPointerMove(e))
     window.addEventListener('click', () => this.onClick())
+
+    // Re-draw all canvas labels once Fraunces/Inter have loaded (they aren't
+    // ready at first paint, so the first draw falls back to a system font).
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => this.textRedraws.forEach((r) => r()))
+    }
   }
 
   // ---- Shell (floor, ceiling, hub walls, wing walls) ---------------------
@@ -320,13 +349,11 @@ export default class Interior {
     this.place('Chair.glb', -36, 0, -Math.PI / 2, 2.6, 'footprint')
     this.place('Little Bookcase.glb', -41, 9, Math.PI / 2, 5, 'height')
 
-    // Projects wing (-Z): a couch facing the framed projects.
-    this.place('Couch.glb', 0, -32, Math.PI, 7, 'footprint')
+    // Projects wing (-Z): a couch facing the hologram exhibits.
+    this.place('Couch.glb', 0, -25, 0, 7, 'footprint')
 
-    // Bedroom wing (+X): bed, painting, window.
-    this.place('Bed.glb', 40, 0, -Math.PI / 2, 8, 'footprint')
-    this.placeOnWall('Wall painting.glb', 41, 8, 8, -Math.PI / 2, 5)
-    this.placeOnWall('Window2 black open 1731.glb', 41, 7, -8, -Math.PI / 2, 6)
+    // About Me wing (+X): a comfy couch to sit and look at the fighter wall.
+    this.place('Couch.glb', 26, 0, Math.PI / 2, 7, 'footprint')
   }
 
   private place(file: string, x: number, z: number, rotY: number, target: number, mode: 'footprint' | 'height') {
@@ -353,106 +380,419 @@ export default class Interior {
     this.group.add(m)
   }
 
-  private placeOnWall(file: string, x: number, y: number, z: number, rotY: number, target: number) {
-    const src = this.experience.resources.models[file]
-    if (!src) return
-    const m = src.clone(true)
-    m.rotation.y = rotY
-    const box = new THREE.Box3().setFromObject(m)
-    const size = box.getSize(new THREE.Vector3())
-    m.scale.setScalar(target / (size.y || 1))
-    const sb = new THREE.Box3().setFromObject(m)
-    const c = sb.getCenter(new THREE.Vector3())
-    m.position.x += INTERIOR_ORIGIN.x + x - c.x
-    m.position.y += INTERIOR_ORIGIN.y + y - c.y
-    m.position.z += INTERIOR_ORIGIN.z + z - c.z
-    this.group.add(m)
-  }
-
-  // ---- Projects (framed, on the projects wing far wall) ------------------
+  // ---- Projects (hologram exhibits) --------------------------------------
 
   private createProjects() {
     const loader = this.experience.resources.textureLoader
+    const wallZ = -WING + 0.3
+
+    // "MY WORK" header, stood clear of the wall (the accent-plane-on-wall was
+    // the "noise" — it z-fought with the wall).
+    const header = this.makeLabel('MY WORK', 2.4, 130)
+    header.position.copy(INTERIOR_ORIGIN).add(new THREE.Vector3(0, 11.4, wallZ + 0.2))
+    this.group.add(header)
+
+    // A patterned rug on the floor in front of the gallery.
+    const rug = new THREE.Mesh(
+      new THREE.PlaneGeometry(14, 18),
+      new THREE.MeshStandardMaterial({ color: '#5a2a2a', roughness: 1 }),
+    )
+    rug.rotation.x = -Math.PI / 2
+    rug.position.copy(INTERIOR_ORIGIN).add(new THREE.Vector3(0, 0.02, -30))
+    this.group.add(rug)
+    const rugBorder = new THREE.Mesh(
+      new THREE.PlaneGeometry(15.2, 19.2),
+      new THREE.MeshStandardMaterial({ color: '#caa24a', roughness: 1 }),
+    )
+    rugBorder.rotation.x = -Math.PI / 2
+    rugBorder.position.copy(INTERIOR_ORIGIN).add(new THREE.Vector3(0, 0.01, -30))
+    this.group.add(rugBorder)
+
+    // Each project is a floating hologram above a glowing pedestal.
+    const cyan = '#39d0ff'
+    const spots: [number, number][] = [
+      [-9, -34],
+      [0, -40],
+      [9, -34],
+    ]
     PROJECTS.forEach((project, i) => {
       const texture = loader.load('/textures/projects/' + project.img)
       texture.colorSpace = THREE.SRGBColorSpace
-      const w = 8
-      const h = w * (1800 / 2880)
-      const frame = new THREE.Group()
-      frame.add(
-        new THREE.Mesh(
-          new THREE.PlaneGeometry(w + 0.7, h + 0.7),
-          new THREE.MeshStandardMaterial({ color: '#2a2018', roughness: 0.6, metalness: 0.2 }),
-        ),
+      const [x, z] = spots[i]
+      const o = INTERIOR_ORIGIN
+
+      // Pedestal.
+      const pedestal = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.5, 2, 3, 28),
+        new THREE.MeshStandardMaterial({ color: '#2a2f38', metalness: 0.6, roughness: 0.4 }),
       )
+      pedestal.position.copy(o).add(new THREE.Vector3(x, 1.5, z))
+      pedestal.castShadow = true
+      pedestal.receiveShadow = true
+      this.group.add(pedestal)
+
+      // Glowing projector ring on top.
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(1.45, 0.12, 12, 32),
+        new THREE.MeshStandardMaterial({ color: cyan, emissive: cyan, emissiveIntensity: 2.5, roughness: 0.4 }),
+      )
+      ring.rotation.x = Math.PI / 2
+      ring.position.copy(o).add(new THREE.Vector3(x, 3.05, z))
+      this.group.add(ring)
+
+      // Translucent light beam rising to the hologram.
+      const beam = new THREE.Mesh(
+        new THREE.CylinderGeometry(2.2, 0.6, 5, 20, 1, true),
+        new THREE.MeshBasicMaterial({
+          color: cyan,
+          transparent: true,
+          opacity: 0.09,
+          side: THREE.DoubleSide,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      )
+      beam.position.copy(o).add(new THREE.Vector3(x, 5.8, z))
+      this.group.add(beam)
+
+      // The floating panel (screenshot) with a glowing edge.
+      const panel = new THREE.Group()
+      const w = 4.6
+      const h = w * (1800 / 2880)
+      const edge = new THREE.Mesh(
+        new THREE.PlaneGeometry(w + 0.5, h + 0.5),
+        new THREE.MeshStandardMaterial({ color: '#0e2733', emissive: cyan, emissiveIntensity: 0.7, roughness: 0.5 }),
+      )
+      panel.add(edge)
       const screen = new THREE.Mesh(
         new THREE.PlaneGeometry(w, h),
-        new THREE.MeshBasicMaterial({ map: texture }),
+        new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide }),
       )
-      screen.position.z = 0.08
+      screen.position.z = 0.04
       screen.userData.url = project.url
-      frame.add(screen)
+      panel.add(screen)
       this.clickable.push(screen)
-      frame.position.copy(INTERIOR_ORIGIN).add(new THREE.Vector3((i - 1) * 9, 7, -WING + 0.4))
-      this.group.add(frame)
+      panel.position.copy(o).add(new THREE.Vector3(x, 8, z))
+      this.group.add(panel)
+      this.showcase.push({ group: panel, phase: i * 2.1 })
 
+      // Title plaque facing the camera on the pedestal front.
       const plaque = new THREE.Mesh(
-        new THREE.PlaneGeometry(6, 1.4),
+        new THREE.PlaneGeometry(4.5, 1.1),
         new THREE.MeshBasicMaterial({ map: this.makeTitleTexture(project.title), transparent: true }),
       )
-      plaque.position.copy(INTERIOR_ORIGIN).add(new THREE.Vector3((i - 1) * 9, 7 - h / 2 - 1.2, -WING + 0.45))
+      plaque.position.copy(o).add(new THREE.Vector3(x, 1.7, z + 2.05))
       this.group.add(plaque)
     })
   }
 
-  private makeTitleTexture(text: string) {
+  private makeTitleTexture(text: string, fontSize = 60) {
     const canvas = document.createElement('canvas')
     canvas.width = 512
     canvas.height = 128
-    const ctx = canvas.getContext('2d')!
-    ctx.fillStyle = '#f0c46a'
-    ctx.font = "700 60px Georgia, 'Times New Roman', serif"
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(text, 256, 64)
     const texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
     texture.anisotropy = 4
+    const render = () => {
+      const ctx = canvas.getContext('2d')!
+      ctx.clearRect(0, 0, 512, 128)
+      let fs = fontSize
+      ctx.font = `700 ${fs}px ${SERIF}`
+      while (ctx.measureText(text).width > 480 && fs > 12) {
+        fs -= 2
+        ctx.font = `700 ${fs}px ${SERIF}`
+      }
+      ctx.fillStyle = '#f0c46a'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(text, 256, 64)
+      texture.needsUpdate = true
+    }
+    render()
+    this.textRedraws.push(render)
+    return texture
+  }
+
+  // A crisp gold text label whose canvas is sized to the text (so it never
+  // clips or stretches). Returns a mesh whose width follows the text.
+  private makeLabel(text: string, worldHeight: number, fontPx = 110) {
+    const canvas = document.createElement('canvas')
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.anisotropy = 4
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false }),
+    )
+    const render = () => {
+      let ctx = canvas.getContext('2d')!
+      ctx.font = `700 ${fontPx}px ${SERIF}`
+      const textW = Math.ceil(ctx.measureText(text).width)
+      canvas.width = textW + fontPx
+      canvas.height = Math.round(fontPx * 1.8)
+      ctx = canvas.getContext('2d')!
+      ctx.fillStyle = '#f0c46a'
+      ctx.font = `700 ${fontPx}px ${SERIF}`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(text, canvas.width / 2, canvas.height / 2)
+      texture.needsUpdate = true
+      mesh.geometry.dispose()
+      mesh.geometry = new THREE.PlaneGeometry((worldHeight * canvas.width) / canvas.height, worldHeight)
+    }
+    render()
+    this.textRedraws.push(render)
+    return mesh
+  }
+
+  // ---- Door signs --------------------------------------------------------
+
+  private createDoorSigns() {
+    const o = INTERIOR_ORIGIN
+    const y = DOOR_H + 1.3
+    const signs: [keyof typeof DOOR_LABELS, THREE.Vector3, number][] = [
+      ['projects', new THREE.Vector3(0, y, -HUB + 0.25), 0],
+      ['reading', new THREE.Vector3(-HUB + 0.25, y, 0), Math.PI / 2],
+      ['bedroom', new THREE.Vector3(HUB - 0.25, y, 0), -Math.PI / 2],
+    ]
+    for (const [room, pos, rotY] of signs) {
+      const sign = new THREE.Mesh(
+        new THREE.PlaneGeometry(6.5, 1.7),
+        new THREE.MeshBasicMaterial({ map: this.makePlaqueTexture(DOOR_LABELS[room]), transparent: true }),
+      )
+      sign.position.copy(o).add(pos)
+      sign.rotation.y = rotY
+      this.group.add(sign)
+    }
+  }
+
+  // A dark plaque with gold text (door signs).
+  private makePlaqueTexture(text: string) {
+    const W = 512
+    const Hc = 140
+    const canvas = document.createElement('canvas')
+    canvas.width = W
+    canvas.height = Hc
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.anisotropy = 4
+    const render = () => {
+      const ctx = canvas.getContext('2d')!
+      ctx.clearRect(0, 0, W, Hc)
+      ctx.fillStyle = 'rgba(22,16,10,0.94)'
+      ctx.beginPath()
+      ctx.roundRect(8, 12, W - 16, Hc - 24, 16)
+      ctx.fill()
+      ctx.lineWidth = 5
+      ctx.strokeStyle = '#caa96f'
+      ctx.stroke()
+      ctx.fillStyle = '#f0c46a'
+      ctx.font = `700 62px ${SERIF}`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(text, W / 2, Hc / 2 + 4)
+      texture.needsUpdate = true
+    }
+    render()
+    this.textRedraws.push(render)
+    return texture
+  }
+
+  // ---- About Me room (bio + favourite fighters) --------------------------
+
+  private createAboutRoom() {
+    const o = INTERIOR_ORIGIN
+    const wall = new THREE.Group()
+    wall.position.copy(o).add(new THREE.Vector3(WING - 0.35, 0, 0))
+    wall.rotation.y = -Math.PI / 2 // face -X (into the room)
+    this.group.add(wall)
+
+    const header = this.makeLabel('About Me', 2.2, 120)
+    header.position.set(0, 12, 0.05)
+    wall.add(header)
+
+    const bio = new THREE.Mesh(
+      new THREE.PlaneGeometry(17, 4),
+      new THREE.MeshBasicMaterial({ map: this.makeBioTexture(), transparent: true }),
+    )
+    bio.position.set(0, 9, 0.05)
+    wall.add(bio)
+
+    // Favourite fighters, in a row.
+    FIGHTERS.forEach((f, i) => {
+      const card = new THREE.Mesh(
+        new THREE.PlaneGeometry(3.4, 4.4),
+        new THREE.MeshBasicMaterial({ map: this.makeFighterCard(f), transparent: true }),
+      )
+      card.position.set((i - (FIGHTERS.length - 1) / 2) * 3.7, 4.2, 0.06)
+      wall.add(card)
+    })
+
+    const label = this.makeLabel('Favourite Fighters', 1.0, 80)
+    label.position.set(0, 6.9, 0.06)
+    wall.add(label)
+  }
+
+  private makeBioTexture() {
+    const W = 1024
+    const Hc = 256
+    const canvas = document.createElement('canvas')
+    canvas.width = W
+    canvas.height = Hc
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.anisotropy = 4
+    const render = () => {
+      const ctx = canvas.getContext('2d')!
+      ctx.clearRect(0, 0, W, Hc)
+      ctx.fillStyle = '#ece3d0'
+      ctx.textAlign = 'center'
+      ctx.font = `400 38px ${SANS}`
+      const lines = [
+        'Frontend Developer from Kathmandu, Nepal.',
+        'I turn ideas into clean, efficient web experiences —',
+        'and when the laptop closes, I am watching the fights.',
+      ]
+      lines.forEach((line, i) => ctx.fillText(line, W / 2, 72 + i * 58))
+      texture.needsUpdate = true
+    }
+    render()
+    this.textRedraws.push(render)
+    return texture
+  }
+
+  private makeFighterCard(f: { name: string; nick: string; flag: string; img: string }) {
+    const W = 360
+    const Hc = 470
+    const canvas = document.createElement('canvas')
+    canvas.width = W
+    canvas.height = Hc
+    const ctx = canvas.getContext('2d')!
+
+    const draw = (img: HTMLImageElement | null) => {
+      ctx.clearRect(0, 0, W, Hc)
+      // Card + gold border.
+      ctx.fillStyle = 'rgba(18,22,30,0.97)'
+      ctx.beginPath()
+      ctx.roundRect(6, 6, W - 12, Hc - 12, 20)
+      ctx.fill()
+      ctx.lineWidth = 5
+      ctx.strokeStyle = '#c9a24a'
+      ctx.stroke()
+
+      // Photo (cover-fit into a rounded region), or a placeholder.
+      const px = 22
+      const py = 22
+      const pw = W - 44
+      const ph = 300
+      ctx.save()
+      ctx.beginPath()
+      ctx.roundRect(px, py, pw, ph, 12)
+      ctx.clip()
+      if (img) {
+        const s = Math.max(pw / img.width, ph / img.height)
+        const iw = img.width * s
+        const ih = img.height * s
+        ctx.drawImage(img, px + (pw - iw) / 2, py + (ph - ih) / 2, iw, ih)
+      } else {
+        ctx.fillStyle = '#222833'
+        ctx.fillRect(px, py, pw, ph)
+      }
+      ctx.restore()
+
+      // Flag badge, name, nickname.
+      ctx.textBaseline = 'middle'
+      ctx.textAlign = 'left'
+      ctx.font = '46px "Apple Color Emoji", "Segoe UI Emoji", sans-serif'
+      ctx.fillText(f.flag, px + 6, py + 30)
+      ctx.textAlign = 'center'
+      ctx.fillStyle = '#f0c46a'
+      ctx.font = `700 30px ${SERIF}`
+      ctx.fillText(f.name, W / 2, 360)
+      ctx.fillStyle = '#cfc3aa'
+      ctx.font = `400 22px ${SANS}`
+      ctx.fillText(f.nick, W / 2, 404)
+    }
+
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.anisotropy = 4
+    let loaded: HTMLImageElement | null = null
+    const render = () => {
+      draw(loaded)
+      texture.needsUpdate = true
+    }
+    render()
+    this.textRedraws.push(render)
+    const img = new Image()
+    img.onload = () => {
+      loaded = img
+      render()
+    }
+    img.src = '/textures/fighters/' + f.img + '.jpg'
     return texture
   }
 
   // ---- Tech badges (in the reading wing) ---------------------------------
 
+  // A framed "My Toolkit" board mounted on the reading room's far wall, with
+  // the tech-stack logos laid out in a grid inside it. Each badge still bounces
+  // on hover.
   private createTech() {
+    const board = new THREE.Group()
+    board.position.copy(INTERIOR_ORIGIN).add(new THREE.Vector3(-WING + 0.35, 8, 0))
+    board.rotation.y = Math.PI / 2 // face +X, into the room
+    this.group.add(board)
+
+    const boardW = 15
+    const boardH = 9
+    // Wooden frame + inner panel.
+    board.add(
+      new THREE.Mesh(
+        new THREE.PlaneGeometry(boardW, boardH),
+        new THREE.MeshStandardMaterial({ color: '#3a2a1a', roughness: 0.55, metalness: 0.2 }),
+      ),
+    )
+    const panel = new THREE.Mesh(
+      new THREE.PlaneGeometry(boardW - 0.8, boardH - 0.8),
+      new THREE.MeshStandardMaterial({ color: '#241b12', roughness: 0.9 }),
+    )
+    panel.position.z = 0.03
+    board.add(panel)
+
+    // Title across the top of the board.
+    const title = new THREE.Mesh(
+      new THREE.PlaneGeometry(7, 1.6),
+      new THREE.MeshBasicMaterial({ map: this.makeTitleTexture('My Toolkit'), transparent: true }),
+    )
+    title.position.set(0, boardH / 2 - 1.1, 0.06)
+    board.add(title)
+
+    const perRow = 6
     TECH.forEach((name, i) => {
-      const group = new THREE.Group()
+      const item = new THREE.Group()
       const badge = new THREE.Mesh(
-        new THREE.CircleGeometry(1.0, 40),
-        new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.92 }),
+        new THREE.CircleGeometry(0.85, 40),
+        new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.95 }),
       )
-      badge.userData.group = group
+      badge.userData.group = item
       this.techTargets.push(badge)
-      group.add(badge)
+      item.add(badge)
       const icon = new THREE.Mesh(
-        new THREE.PlaneGeometry(1.35, 1.35),
+        new THREE.PlaneGeometry(1.15, 1.15),
         new THREE.MeshBasicMaterial({ map: this.loadIconTexture('/textures/tech/' + name + '.svg'), transparent: true }),
       )
       icon.position.z = 0.02
-      group.add(icon)
+      item.add(icon)
 
-      const perRow = 6
       const row = Math.floor(i / perRow)
       const col = i % perRow
       const count = row === 0 ? Math.min(perRow, TECH.length) : TECH.length - perRow
-      const x = -28 + (col - (count - 1) / 2) * 2.6
-      const y = 9 - row * 2.6
-      group.position.copy(INTERIOR_ORIGIN).add(new THREE.Vector3(x, y, 0))
-      group.userData.phase = i * 0.7
-      group.userData.baseY = group.position.y
-      group.userData.springScale = 1
-      group.userData.springVel = 0
-      this.group.add(group)
-      this.techIcons.push(group)
+      item.position.set((col - (count - 1) / 2) * 2.35, 0.4 - row * 2.4, 0.1)
+      item.userData.springScale = 1
+      item.userData.springVel = 0
+      board.add(item)
+      this.techIcons.push(item)
     })
   }
 
@@ -526,13 +866,17 @@ export default class Interior {
       this.portrait.group.position.y = this.portrait.baseY + Math.sin(t * 0.9) * 0.2
     }
 
-    // Tech badges bob, face the camera, and bounce on hover.
+    // Hologram project panels float and slowly turn.
+    for (const item of this.showcase) {
+      item.group.position.y = INTERIOR_ORIGIN.y + 8 + Math.sin(t * 0.8 + item.phase) * 0.25
+      item.group.rotation.y = Math.sin(t * 0.4 + item.phase) * 0.5
+    }
+
+    // Wall-mounted tech badges bounce toward the room when hovered.
     const techHit = this.raycaster.intersectObjects(this.techTargets)[0]
     const hoveredIcon = (techHit?.object.userData.group as THREE.Group) ?? null
     for (const icon of this.techIcons) {
-      icon.position.y = (icon.userData.baseY as number) + Math.sin(t + (icon.userData.phase as number)) * 0.3
-      icon.lookAt(camera.position)
-      const goalS = icon === hoveredIcon ? 1.5 : 1
+      const goalS = icon === hoveredIcon ? 1.4 : 1
       icon.userData.springVel = (icon.userData.springVel as number) * 0.6 + (goalS - (icon.userData.springScale as number)) * 0.28
       icon.userData.springScale = (icon.userData.springScale as number) + (icon.userData.springVel as number)
       icon.scale.setScalar(icon.userData.springScale as number)
@@ -581,9 +925,16 @@ export default class Interior {
       )
       goalLook = goalPos.clone().add(dir.multiplyScalar(14))
     } else {
+      // In a room the camera is fixed, but you can look around with the pointer.
       const v = VIEWS[this.focus]
       goalPos = o.clone().add(v.pos)
-      goalLook = o.clone().add(v.look)
+      const px = THREE.MathUtils.clamp(this.pointer.x, -1, 1)
+      const py = THREE.MathUtils.clamp(this.pointer.y, -1, 1)
+      const dir = o.clone().add(v.look).sub(goalPos).normalize()
+      dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), -px * 0.6) // look left/right
+      const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize()
+      dir.applyAxisAngle(right, py * 0.28) // look up/down
+      goalLook = goalPos.clone().add(dir.multiplyScalar(20))
     }
 
     if (!this.camReady) {
