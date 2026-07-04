@@ -133,11 +133,15 @@ export default class Renderer {
       return
     }
 
+    // Keep the picture SHARP: never drop below 85% of native resolution, and
+    // only step down when the frame rate is genuinely struggling (~<30fps).
+    // This trades a little smoothness for a crisp, full-resolution image.
+    const floor = Math.max(cap * 0.85, 1)
     let next = this.currentRatio
-    if (this.avgDelta > 26 && this.currentRatio > cap * 0.6) {
-      next = Math.max(cap * 0.6, this.currentRatio - 0.25) // ~<38fps -> downscale
-    } else if (this.avgDelta < 15 && this.currentRatio < cap) {
-      next = Math.min(cap, this.currentRatio + 0.25) // ~>66fps -> upscale
+    if (this.avgDelta > 33 && this.currentRatio > floor) {
+      next = Math.max(floor, this.currentRatio - 0.15) // struggling -> downscale a touch
+    } else if (this.avgDelta < 20 && this.currentRatio < cap) {
+      next = Math.min(cap, this.currentRatio + 0.15) // comfortable -> recover to native
     }
 
     if (next !== this.currentRatio) {

@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import Experience from '../core/Experience'
-import { quality } from '../utils/quality'
-import { SURFACE_END } from './stages'
+import { SPACE_END, SURFACE_END } from './stages'
 
 // STAGE 3: inside the house — a central HUB (portrait + dining table) with
 // three LOCKED doors branching in three directions:
@@ -17,10 +16,15 @@ const HUB = 15 // hub half-size
 const WING = 45 // far wall distance of each wing
 const WH = 12 // wing half-width
 const T = 0.4 // wall thickness
-const DOOR_W = 8
-const DOOR_H = 9
+// Human-scale doors (the old 8x9 openings felt like castle gates).
+const DOOR_W = 5
+const DOOR_H = 8.5
+// The private room behind the hub (its door is passcode-locked).
+const PRIV_D = 16 // room depth behind the hub back wall
+const PRIV_W = 11 // room half-width
+const PASSCODE = '984896'
 
-type Focus = 'hub' | 'reading' | 'projects' | 'bedroom'
+type Focus = 'hub' | 'reading' | 'projects' | 'bedroom' | 'private'
 
 interface DoorInfo {
   pivot: THREE.Group
@@ -28,7 +32,9 @@ interface DoorInfo {
   lock: THREE.Group
   room: Focus
   openSign: number
+  baseRot: number // pivot rotation when CLOSED (doors are built along +X)
   target: number // 0 closed, 1 open
+  locked: boolean // a locked door won't open until unlocked (private: passcode)
 }
 
 interface ProjectInfo {
@@ -46,19 +52,11 @@ const TECH = [
   'nodejs', 'firebase', 'supabase', 'figma', 'html5', 'css3',
 ]
 
-// Adarsh's favourite fighters, shown in the About Me room.
-const FIGHTERS: { name: string; nick: string; flag: string; img: string }[] = [
-  { name: 'Khabib', nick: 'The Eagle · 29-0', flag: '🇷🇺', img: 'khabib' },
-  { name: 'Islam Makhachev', nick: 'The Dagestani', flag: '🇷🇺', img: 'islam' },
-  { name: 'Conor McGregor', nick: 'The Notorious', flag: '🇮🇪', img: 'conor' },
-  { name: 'Jon Jones', nick: 'Bones', flag: '🇺🇸', img: 'jonjones' },
-  { name: 'Ilia Topuria', nick: 'El Matador', flag: '🇬🇪', img: 'ilia' },
-]
-
-const DOOR_LABELS: Record<'reading' | 'projects' | 'bedroom', string> = {
+const DOOR_LABELS: Record<'reading' | 'projects' | 'bedroom' | 'private', string> = {
   reading: 'Skills',
   projects: 'Projects',
   bedroom: 'About Me',
+  private: 'Private',
 }
 
 // Fonts for the canvas-drawn labels (match the site: Fraunces display + Inter).
@@ -68,10 +66,11 @@ const SANS = "'Inter', system-ui, -apple-system, sans-serif"
 // Camera position + lookAt for each ROOM (relative to INTERIOR_ORIGIN). The hub
 // uses HUB_CAM and free mouse-look so you can turn to see all three doors.
 const HUB_CAM = new THREE.Vector3(0, 7.5, 7)
-const VIEWS: Record<'reading' | 'projects' | 'bedroom', { pos: THREE.Vector3; look: THREE.Vector3 }> = {
+const VIEWS: Record<'reading' | 'projects' | 'bedroom' | 'private', { pos: THREE.Vector3; look: THREE.Vector3 }> = {
   reading: { pos: new THREE.Vector3(-24, 7, 0), look: new THREE.Vector3(-45, 6, 0) },
   projects: { pos: new THREE.Vector3(0, 7, -17), look: new THREE.Vector3(0, 7, -42) },
   bedroom: { pos: new THREE.Vector3(24, 7, 0), look: new THREE.Vector3(45, 6, 0) },
+  private: { pos: new THREE.Vector3(0, 7, HUB + 4), look: new THREE.Vector3(0, 5.5, HUB + PRIV_D - 2) },
 }
 
 export default class Interior {
@@ -90,7 +89,7 @@ export default class Interior {
   private portrait: { group: THREE.Group; baseY: number } | null = null
   private hoveredProject: THREE.Mesh | null = null
   private spots: THREE.SpotLight[] = []
-  private shadowPrimed = false
+  private arms: THREE.Group | null = null
   private textRedraws: (() => void)[] = [] // re-run when web fonts finish loading
 
   private focus: Focus = 'hub'
@@ -98,6 +97,10 @@ export default class Interior {
   private camLook = new THREE.Vector3()
   private camReady = false
   private hintEl: HTMLElement
+  private keypadEl!: HTMLElement
+  private keypadOpen = false
+  private keypadCode = ''
+  private keypadDoor: DoorInfo | null = null
 
   constructor() {
     this.experience = new Experience()
@@ -107,8 +110,10 @@ export default class Interior {
     this.hintEl = document.createElement('div')
     this.hintEl.className = 'room-hint'
     document.body.appendChild(this.hintEl)
+    this.keypadEl = this.buildKeypad()
 
     this.createShell()
+    this.createNightWindows()
     this.createLights()
     this.createDoors()
     this.createDoorSigns()
@@ -147,9 +152,11 @@ export default class Interior {
 
     const checker = this.makeCheckerTexture()
     checker.repeat.set(25, 25)
+    // Matte floor: the old glossy finish (metalness + low roughness) caught the
+    // bulbs as big WHITE specular blobs — that was the "white shade".
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(100, 100),
-      new THREE.MeshStandardMaterial({ map: checker, roughness: 0.55, metalness: 0.1 }),
+      new THREE.MeshStandardMaterial({ map: checker, roughness: 0.92, metalness: 0 }),
     )
     floor.rotation.x = -Math.PI / 2
     floor.position.copy(o)
@@ -158,19 +165,27 @@ export default class Interior {
 
     const ceiling = new THREE.Mesh(
       new THREE.PlaneGeometry(100, 100),
-      new THREE.MeshStandardMaterial({ color: '#efe6d2', roughness: 1 }),
+      new THREE.MeshStandardMaterial({ color: '#d8cdb6', roughness: 1 }),
     )
     ceiling.rotation.x = Math.PI / 2
     ceiling.position.copy(o).add(new THREE.Vector3(0, H, 0))
     this.group.add(ceiling)
 
-    const wall = new THREE.MeshStandardMaterial({ color: '#c8b79a', roughness: 1 })
+    const wall = new THREE.MeshStandardMaterial({ color: '#b1a184', roughness: 1 })
     const seg = (2 * HUB - DOOR_W) / 2 // wall segment beside a doorway
     const off = DOOR_W / 2 + seg / 2 // its centre offset from the doorway
     const lintelY = DOOR_H + (H - DOOR_H) / 2
 
-    // Hub back wall (solid — the side we arrive from).
-    this.box(2 * HUB, H, T, 0, H / 2, HUB, wall)
+    // Hub back wall (the side we arrive from) — now with a doorway into the
+    // passcode-locked private room behind it.
+    this.box(seg, H, T, -off, H / 2, HUB, wall)
+    this.box(seg, H, T, off, H / 2, HUB, wall)
+    this.box(DOOR_W, H - DOOR_H, T, 0, lintelY, HUB, wall)
+
+    // The private room: far wall + two side walls behind the hub.
+    this.box(2 * PRIV_W, H, T, 0, H / 2, HUB + PRIV_D, wall)
+    this.box(T, H, PRIV_D, -PRIV_W, H / 2, HUB + PRIV_D / 2, wall)
+    this.box(T, H, PRIV_D, PRIV_W, H / 2, HUB + PRIV_D / 2, wall)
 
     // Hub front wall (doorway -> projects), along X.
     this.box(seg, H, T, -off, H / 2, -HUB, wall)
@@ -201,6 +216,100 @@ export default class Interior {
     this.box(wingLen, H, T, wingMid, H / 2, -WH, wall)
   }
 
+  // ---- Night windows -------------------------------------------------------
+
+  // Framed windows that look out on the night: a starry sky with the moon,
+  // drawn on a canvas and rendered UNLIT so the panes softly glow in the dark.
+  private createNightWindows() {
+    const o = INTERIOR_ORIGIN
+    const tex = this.makeNightWindowTexture()
+    const frame = new THREE.MeshStandardMaterial({ color: '#2e2214', roughness: 0.6 })
+    const pane = new THREE.MeshBasicMaterial({ map: tex })
+    const PW = 4.6 // pane width
+    const PH = 3.6 // pane height
+    const Y = 7.4 // centre height on the wall
+
+    // [x, z, rotY] — two on the hub back wall (outboard of the private room
+    // behind it) and one on the +Z side wall of each wing. All sit flush.
+    const spots: [number, number, number][] = [
+      [-12.2, HUB - T, Math.PI],
+      [12.2, HUB - T, Math.PI],
+      [-30, WH - T, Math.PI], // reading wing
+      [30, WH - T, Math.PI], // bedroom wing
+    ]
+
+    for (const [x, z, rotY] of spots) {
+      const w = new THREE.Group()
+      // Frame slab behind the pane, slightly larger.
+      const back = new THREE.Mesh(new THREE.BoxGeometry(PW + 0.6, PH + 0.6, 0.18), frame)
+      w.add(back)
+      // The glowing night pane.
+      const glass = new THREE.Mesh(new THREE.PlaneGeometry(PW, PH), pane)
+      glass.position.z = 0.12
+      w.add(glass)
+      // Cross mullions.
+      const barV = new THREE.Mesh(new THREE.BoxGeometry(0.12, PH, 0.08), frame)
+      barV.position.z = 0.16
+      const barH = new THREE.Mesh(new THREE.BoxGeometry(PW, 0.12, 0.08), frame)
+      barH.position.z = 0.16
+      w.add(barV, barH)
+      // Sill.
+      const sill = new THREE.Mesh(new THREE.BoxGeometry(PW + 1, 0.22, 0.5), frame)
+      sill.position.set(0, -(PH / 2 + 0.35), 0.2)
+      w.add(sill)
+
+      w.position.copy(o).add(new THREE.Vector3(x, Y, z))
+      w.rotation.y = rotY
+      this.group.add(w)
+    }
+  }
+
+  private makeNightWindowTexture() {
+    const w = 256
+    const h = 320
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')!
+    // Deep navy fading to a faintly lit horizon at the bottom.
+    const g = ctx.createLinearGradient(0, 0, 0, h)
+    g.addColorStop(0, '#050a18')
+    g.addColorStop(0.75, '#0d1730')
+    g.addColorStop(1, '#182450')
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, w, h)
+    // Stars.
+    for (let i = 0; i < 90; i++) {
+      const x = Math.random() * w
+      const y = Math.random() * h * 0.85
+      ctx.fillStyle = `rgba(255,255,255,${0.35 + Math.random() * 0.6})`
+      ctx.beginPath()
+      ctx.arc(x, y, 0.3 + Math.random() * 1.2, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    // The moon with a soft glow and a couple of maria.
+    const mx = w * 0.72
+    const my = h * 0.2
+    const glow = ctx.createRadialGradient(mx, my, 4, mx, my, 42)
+    glow.addColorStop(0, 'rgba(220,230,255,0.85)')
+    glow.addColorStop(1, 'rgba(220,230,255,0)')
+    ctx.fillStyle = glow
+    ctx.fillRect(mx - 42, my - 42, 84, 84)
+    ctx.fillStyle = '#e8edff'
+    ctx.beginPath()
+    ctx.arc(mx, my, 13, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#c5cfe8'
+    for (const [dx, dy, r] of [[-4, 3, 3], [5, -4, 2.2], [2, 6, 1.8]]) {
+      ctx.beginPath()
+      ctx.arc(mx + dx, my + dy, r, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    return texture
+  }
+
   private makeCheckerTexture() {
     const size = 128
     const canvas = document.createElement('canvas')
@@ -215,7 +324,7 @@ export default class Interior {
     const texture = new THREE.CanvasTexture(canvas)
     texture.wrapS = texture.wrapT = THREE.RepeatWrapping
     texture.colorSpace = THREE.SRGBColorSpace
-    texture.anisotropy = 4
+    texture.anisotropy = 16
     return texture
   }
 
@@ -226,40 +335,97 @@ export default class Interior {
     this.addDoor(-DOOR_W / 2, -HUB, 'x', 'projects', -1)
     // Left (reading): hinge on the -Z edge, panel spans +Z.
     this.addDoor(-HUB, -DOOR_W / 2, 'z', 'reading', 1)
-    // Right (bedroom): hinge on the +Z edge, panel spans -Z.
-    this.addDoor(HUB, DOOR_W / 2, 'z', 'bedroom', -1)
+    // Right (bedroom / About Me): hinge on the +Z edge, panel spans -Z. The
+    // spanSign -1 is what actually flips the panel into the doorway (without
+    // it the About Me door sat buried INSIDE the wall beside its opening).
+    // openSign +1 swings it OUT toward the hub, same as the other doors.
+    this.addDoor(HUB, DOOR_W / 2, 'z', 'bedroom', 1, false, -1)
+    // Back (private): passcode-locked until you enter 984896.
+    this.addDoor(-DOOR_W / 2, HUB, 'x', 'private', 1, true)
   }
 
-  private addDoor(hingeX: number, hingeZ: number, axis: 'x' | 'z', room: Focus, openSign: number) {
+  private addDoor(
+    hingeX: number,
+    hingeZ: number,
+    axis: 'x' | 'z',
+    room: Focus,
+    openSign: number,
+    locked = false,
+    spanSign = 1, // which way the panel extends from its hinge along its wall
+  ) {
+    // Every door is BUILT along +X and rotated into place with baseRot — one
+    // canonical, detailed door assembly instead of four axis-specific boxes.
+    const baseRot =
+      axis === 'x' ? (spanSign === 1 ? 0 : Math.PI) : spanSign === 1 ? -Math.PI / 2 : Math.PI / 2
+
     const pivot = new THREE.Group()
     pivot.position.copy(INTERIOR_ORIGIN).add(new THREE.Vector3(hingeX, 0, hingeZ))
+    pivot.rotation.y = baseRot
     this.group.add(pivot)
 
-    const doorMat = new THREE.MeshStandardMaterial({ color: '#5a3a22', roughness: 0.55, metalness: 0.15 })
-    const geo =
-      axis === 'x'
-        ? new THREE.BoxGeometry(DOOR_W, DOOR_H, 0.25)
-        : new THREE.BoxGeometry(0.25, DOOR_H, DOOR_W)
-    const panel = new THREE.Mesh(geo, doorMat)
-    // Offset the panel so it fills the gap starting at the hinge.
-    panel.position.set(axis === 'x' ? DOOR_W / 2 : 0, DOOR_H / 2, axis === 'z' ? DOOR_W / 2 : 0)
+    // A proper panelled wooden door with a brass knob and hinges.
+    const wood = new THREE.MeshStandardMaterial({ color: '#6b4226', roughness: 0.6, metalness: 0.05 })
+    const woodDark = new THREE.MeshStandardMaterial({ color: '#4a2d18', roughness: 0.7 })
+    const brass = new THREE.MeshStandardMaterial({ color: '#e8b64a', metalness: 0.9, roughness: 0.3 })
+
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W, DOOR_H, 0.22), wood)
+    panel.position.set(DOOR_W / 2, DOOR_H / 2, 0)
     panel.castShadow = true
     pivot.add(panel)
     this.doorTargets.push(panel)
 
-    // A little brass padlock hanging on the door.
+    // Recessed panels (upper + lower) on both faces.
+    for (const face of [1, -1]) {
+      const upper = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W * 0.68, DOOR_H * 0.38, 0.05), woodDark)
+      upper.position.set(0, DOOR_H * 0.2, face * 0.12)
+      const lower = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W * 0.68, DOOR_H * 0.3, 0.05), woodDark)
+      lower.position.set(0, -DOOR_H * 0.24, face * 0.12)
+      panel.add(upper, lower)
+      // Brass knob near the swinging edge, at hand height.
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 14), brass)
+      knob.position.set(DOOR_W * 0.36, -DOOR_H * 0.04, face * 0.24)
+      panel.add(knob)
+    }
+    // Hinges on the hinge edge.
+    for (const hy of [DOOR_H * 0.32, -DOOR_H * 0.32]) {
+      const hinge = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.7, 0.3), brass)
+      hinge.position.set(-DOOR_W * 0.48, hy, 0)
+      panel.add(hinge)
+    }
+
+    // A dark wooden frame around the opening (fixed to the wall, not swinging).
+    const frameMat = new THREE.MeshStandardMaterial({ color: '#3a2414', roughness: 0.75 })
+    const frame = new THREE.Group()
+    for (const fx of [-(DOOR_W / 2 + 0.18), DOOR_W / 2 + 0.18]) {
+      const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.36, DOOR_H + 0.15, 0.7), frameMat)
+      jamb.position.set(fx, (DOOR_H + 0.15) / 2, 0)
+      frame.add(jamb)
+    }
+    const head = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + 1.1, 0.4, 0.7), frameMat)
+    head.position.set(0, DOOR_H + 0.25, 0)
+    frame.add(head)
+    // Doorway centre = hinge + half a width along the door's closed direction.
+    frame.position
+      .copy(INTERIOR_ORIGIN)
+      .add(new THREE.Vector3(hingeX, 0, hingeZ))
+      .add(new THREE.Vector3(Math.cos(baseRot) * (DOOR_W / 2), 0, -Math.sin(baseRot) * (DOOR_W / 2)))
+    frame.rotation.y = baseRot
+    this.group.add(frame)
+
+    // A little brass padlock hanging by the knob.
     const lock = new THREE.Group()
-    const brass = new THREE.MeshStandardMaterial({ color: '#e8b64a', metalness: 0.9, roughness: 0.3 })
     const body = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.4), brass)
     lock.add(body)
     const shackle = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.09, 8, 16, Math.PI), brass)
     shackle.position.y = 0.5
     lock.add(shackle)
-    lock.position.set(axis === 'x' ? DOOR_W - 0.8 : 0.35, DOOR_H / 2, axis === 'z' ? DOOR_W - 0.8 : 0)
+    lock.position.set(DOOR_W - 0.8, DOOR_H / 2 - 0.9, 0.32)
     pivot.add(lock)
 
-    const door: DoorInfo = { pivot, panel, lock, room, openSign, target: 0 }
-    panel.userData.door = door
+    const door: DoorInfo = { pivot, panel, lock, room, openSign, baseRot, target: 0, locked }
+    // Tag the panel AND all its decor children (knobs, inset panels, hinges) —
+    // the raycaster returns whichever child mesh you actually clicked.
+    panel.traverse((c) => (c.userData.door = door))
     this.doors.push(door)
   }
 
@@ -267,27 +433,50 @@ export default class Interior {
 
   private createLights() {
     const o = INTERIOR_ORIGIN
-    this.group.add(new THREE.AmbientLight('#ffe9cf', 0.5))
+    // Dim night ambient: the house is dark, and the glowing bulbs are the
+    // light — but with just enough fill that the rooms stay readable.
+    this.group.add(new THREE.AmbientLight('#232c42', 0.12))
 
-    // A warm lamp in the hub and each wing.
+    // The faintest cool moonlight through the night windows (kept very low so
+    // it doesn't wash the walls with a pale sheen).
+    const moonlight = new THREE.DirectionalLight('#7f96c4', 0.08)
+    moonlight.position.copy(o).add(new THREE.Vector3(6, 20, 30))
+    moonlight.target.position.copy(o)
+    this.group.add(moonlight, moonlight.target)
+
+    // A warm ceiling bulb in the hub, each wing and the private room — cosy
+    // pools of lamplight, a bit stronger and wider so the rooms feel lived-in.
     const lampSpots: [number, number][] = [
-      [0, 2], [-30, 0], [0, -30], [30, 0],
+      [0, 2], [-30, 0], [0, -30], [30, 0], [0, HUB + PRIV_D / 2],
     ]
+    const roseMat = new THREE.MeshStandardMaterial({ color: '#1b1712', roughness: 0.8 })
     for (const [x, z] of lampSpots) {
-      const lamp = new THREE.PointLight('#ffcf94', 45, 55, 2)
-      lamp.position.copy(o).add(new THREE.Vector3(x, 12, z))
+      const pos = o.clone().add(new THREE.Vector3(x, 11.2, z))
+      const lamp = new THREE.PointLight('#ffc87d', 68, 36, 2)
+      lamp.position.copy(pos)
       this.group.add(lamp)
+      // The fixture: a dark ceiling rose, a cord, and the glowing bulb.
+      const rose = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 0.18, 16), roseMat)
+      rose.position.copy(pos).setY(o.y + H - 0.09)
+      const cord = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.03, 0.03, H - 11.2 - 0.3, 6),
+        new THREE.MeshBasicMaterial({ color: '#0c0a08' }),
+      )
+      cord.position.copy(pos).add(new THREE.Vector3(0, (H - 11.2 + 0.3) / 2, 0))
+      const bulb = new THREE.Mesh(
+        new THREE.SphereGeometry(0.5, 18, 18),
+        new THREE.MeshBasicMaterial({ color: '#ffe3ae' }),
+      )
+      bulb.position.copy(pos)
+      this.group.add(rose, cord, bulb)
     }
 
-    // Gallery spotlights on the projects far wall.
+    // Gallery spotlights on the projects far wall. No cast shadows — the
+    // shadow maps only produced banding artifacts on the walls in the dark.
     for (const x of [-8, 0, 8]) {
       const spot = new THREE.SpotLight('#fff4e0', 90, 34, Math.PI / 7, 0.5, 1.5)
       spot.position.copy(o).add(new THREE.Vector3(x, 12, -33))
       spot.target.position.copy(o).add(new THREE.Vector3(x, 7, -45))
-      spot.castShadow = quality.shadows
-      spot.shadow.mapSize.set(1024, 1024)
-      spot.shadow.bias = -0.0004
-      spot.shadow.autoUpdate = false
       this.spots.push(spot)
       this.group.add(spot)
       this.group.add(spot.target)
@@ -352,8 +541,39 @@ export default class Interior {
     // Projects wing (-Z): a couch facing the hologram exhibits.
     this.place('Couch.glb', 0, -25, 0, 7, 'footprint')
 
-    // About Me wing (+X): a comfy couch to sit and look at the fighter wall.
+    // About Me wing (+X): a comfy couch to sit and read the About wall.
     this.place('Couch.glb', 26, 0, Math.PI / 2, 7, 'footprint')
+
+    // Private room (+Z, behind the passcode door): a bed against the far wall.
+    this.place('Bed.glb', 0, HUB + PRIV_D - 4.5, Math.PI, 8, 'footprint')
+
+    this.createArms()
+  }
+
+  // First-person arms parented to the camera — only shown inside the house.
+  private createArms() {
+    const src = this.experience.resources.models['first_person_arms.glb']
+    if (!src) return
+    const arms = src.clone(true)
+    const box = new THREE.Box3().setFromObject(arms)
+    const size = box.getSize(new THREE.Vector3())
+    arms.scale.setScalar(2.6 / (Math.max(size.x, size.y, size.z) || 1))
+    arms.rotation.y = Math.PI // face the same way as the camera
+    arms.position.set(0, -1.5, -1.8) // camera space: low + in front
+    arms.visible = false
+    this.experience.camera.instance.add(arms)
+    this.arms = arms
+  }
+
+  // Toggle the first-person hands (shown from the surface walk onward) with a
+  // gentle bob. Called every frame by World (even outside the interior stage).
+  updateArms(p: number) {
+    if (!this.arms) return
+    const show = p >= SPACE_END + 0.02
+    this.arms.visible = show
+    if (show) {
+      this.arms.position.y = -1.5 + Math.sin(this.experience.time.elapsed * 0.004) * 0.05
+    }
   }
 
   private place(file: string, x: number, z: number, rotY: number, target: number, mode: 'footprint' | 'height') {
@@ -492,7 +712,7 @@ export default class Interior {
     canvas.height = 128
     const texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
-    texture.anisotropy = 4
+    texture.anisotropy = 16
     const render = () => {
       const ctx = canvas.getContext('2d')!
       ctx.clearRect(0, 0, 512, 128)
@@ -519,7 +739,7 @@ export default class Interior {
     const canvas = document.createElement('canvas')
     const texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
-    texture.anisotropy = 4
+    texture.anisotropy = 16
     const mesh = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
       new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false }),
@@ -554,6 +774,7 @@ export default class Interior {
       ['projects', new THREE.Vector3(0, y, -HUB + 0.25), 0],
       ['reading', new THREE.Vector3(-HUB + 0.25, y, 0), Math.PI / 2],
       ['bedroom', new THREE.Vector3(HUB - 0.25, y, 0), -Math.PI / 2],
+      ['private', new THREE.Vector3(0, y, HUB - 0.25), Math.PI],
     ]
     for (const [room, pos, rotY] of signs) {
       const sign = new THREE.Mesh(
@@ -575,7 +796,7 @@ export default class Interior {
     canvas.height = Hc
     const texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
-    texture.anisotropy = 4
+    texture.anisotropy = 16
     const render = () => {
       const ctx = canvas.getContext('2d')!
       ctx.clearRect(0, 0, W, Hc)
@@ -598,7 +819,7 @@ export default class Interior {
     return texture
   }
 
-  // ---- About Me room (bio + favourite fighters) --------------------------
+  // ---- About Me room (bio + education journey) ---------------------------
 
   private createAboutRoom() {
     const o = INTERIOR_ORIGIN
@@ -607,53 +828,99 @@ export default class Interior {
     wall.rotation.y = -Math.PI / 2 // face -X (into the room)
     this.group.add(wall)
 
-    const header = this.makeLabel('About Me', 2.2, 120)
-    header.position.set(0, 12, 0.05)
+    const header = this.makeLabel('About Adarsh', 2.2, 120)
+    header.position.set(0, 12.2, 0.05)
     wall.add(header)
 
-    const bio = new THREE.Mesh(
-      new THREE.PlaneGeometry(17, 4),
-      new THREE.MeshBasicMaterial({ map: this.makeBioTexture(), transparent: true }),
+    const badge = this.makeLabel('✦ Completed my Undergraduate ✦', 0.85, 64)
+    badge.position.set(0, 10.9, 0.05)
+    wall.add(badge)
+
+    // Adarsh's photo in a gold-rimmed circle, up beside the header.
+    const photoTex = this.experience.resources.textureLoader.load('/textures/photo/adarsh.png')
+    photoTex.colorSpace = THREE.SRGBColorSpace
+    const photo = new THREE.Mesh(
+      new THREE.CircleGeometry(1.05, 48),
+      new THREE.MeshBasicMaterial({ map: photoTex }),
     )
-    bio.position.set(0, 9, 0.05)
+    photo.position.set(-7.6, 11.6, 0.06)
+    wall.add(photo)
+    const photoRing = new THREE.Mesh(
+      new THREE.RingGeometry(1.05, 1.18, 48),
+      new THREE.MeshBasicMaterial({ color: '#f0c46a' }),
+    )
+    photoRing.position.set(-7.6, 11.6, 0.06)
+    wall.add(photoRing)
+
+    const bio = new THREE.Mesh(
+      new THREE.PlaneGeometry(20, 5.2),
+      new THREE.MeshBasicMaterial({ map: this.makeAboutBioTexture(), transparent: true }),
+    )
+    bio.position.set(0, 7.9, 0.05)
     wall.add(bio)
 
-    // Favourite fighters, in a row.
-    FIGHTERS.forEach((f, i) => {
-      const card = new THREE.Mesh(
-        new THREE.PlaneGeometry(3.4, 4.4),
-        new THREE.MeshBasicMaterial({ map: this.makeFighterCard(f), transparent: true }),
-      )
-      card.position.set((i - (FIGHTERS.length - 1) / 2) * 3.7, 4.2, 0.06)
-      wall.add(card)
-    })
-
-    const label = this.makeLabel('Favourite Fighters', 1.0, 80)
-    label.position.set(0, 6.9, 0.06)
-    wall.add(label)
+    const timeline = new THREE.Mesh(
+      new THREE.PlaneGeometry(20, 5.6),
+      new THREE.MeshBasicMaterial({ map: this.makeEducationTexture(), transparent: true }),
+    )
+    timeline.position.set(0, 3.2, 0.06)
+    wall.add(timeline)
   }
 
-  private makeBioTexture() {
-    const W = 1024
-    const Hc = 256
+  // Word-wrap a string to fit maxW at the ctx's current font.
+  private wrapText(ctx: CanvasRenderingContext2D, text: string, maxW: number) {
+    const words = text.split(' ')
+    const lines: string[] = []
+    let cur = ''
+    for (const w of words) {
+      const candidate = cur ? cur + ' ' + w : w
+      if (ctx.measureText(candidate).width > maxW && cur) {
+        lines.push(cur)
+        cur = w
+      } else {
+        cur = candidate
+      }
+    }
+    if (cur) lines.push(cur)
+    return lines
+  }
+
+  private makeAboutBioTexture() {
+    const W = 1600
+    const Hc = 416
     const canvas = document.createElement('canvas')
     canvas.width = W
     canvas.height = Hc
     const texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
-    texture.anisotropy = 4
+    texture.anisotropy = 16
+    const BIO =
+      'I am Adarsh Thapa, a recent graduate from Herald College Kathmandu, where I completed my ' +
+      'undergraduate studies. With a passion for technology and a drive to continuously learn and grow, ' +
+      'my goal is to become a proficient full-stack developer. During my academic journey, I developed a ' +
+      'strong foundation in various programming languages and web development technologies, which has ' +
+      'fueled my ambition to excel in the field of software development. I am constantly seeking ' +
+      'opportunities to expand my knowledge and enhance my skills, enabling me to create innovative and ' +
+      'efficient solutions.'
     const render = () => {
       const ctx = canvas.getContext('2d')!
       ctx.clearRect(0, 0, W, Hc)
-      ctx.fillStyle = '#ece3d0'
+      // A softly glowing card behind the text keeps it readable in the dark.
+      ctx.fillStyle = 'rgba(16,20,30,0.82)'
+      ctx.beginPath()
+      ctx.roundRect(8, 8, W - 16, Hc - 16, 26)
+      ctx.fill()
+      ctx.lineWidth = 3
+      ctx.strokeStyle = 'rgba(240,196,106,0.55)'
+      ctx.stroke()
+
+      ctx.fillStyle = '#f2ead8'
       ctx.textAlign = 'center'
-      ctx.font = `400 38px ${SANS}`
-      const lines = [
-        'Frontend Developer from Kathmandu, Nepal.',
-        'I turn ideas into clean, efficient web experiences —',
-        'and when the laptop closes, I am watching the fights.',
-      ]
-      lines.forEach((line, i) => ctx.fillText(line, W / 2, 72 + i * 58))
+      ctx.font = `400 34px ${SANS}`
+      const lines = this.wrapText(ctx, BIO, W - 140)
+      const lineH = 46
+      const startY = Hc / 2 - ((lines.length - 1) * lineH) / 2 + 6
+      lines.forEach((line, i) => ctx.fillText(line, W / 2, startY + i * lineH))
       texture.needsUpdate = true
     }
     render()
@@ -661,75 +928,88 @@ export default class Interior {
     return texture
   }
 
-  private makeFighterCard(f: { name: string; nick: string; flag: string; img: string }) {
-    const W = 360
-    const Hc = 470
+  // The education journey: three vibrant numbered milestones on a timeline.
+  private makeEducationTexture() {
+    const W = 1600
+    const Hc = 448
     const canvas = document.createElement('canvas')
     canvas.width = W
     canvas.height = Hc
-    const ctx = canvas.getContext('2d')!
-
-    const draw = (img: HTMLImageElement | null) => {
-      ctx.clearRect(0, 0, W, Hc)
-      // Card + gold border.
-      ctx.fillStyle = 'rgba(18,22,30,0.97)'
-      ctx.beginPath()
-      ctx.roundRect(6, 6, W - 12, Hc - 12, 20)
-      ctx.fill()
-      ctx.lineWidth = 5
-      ctx.strokeStyle = '#c9a24a'
-      ctx.stroke()
-
-      // Photo (cover-fit into a rounded region), or a placeholder.
-      const px = 22
-      const py = 22
-      const pw = W - 44
-      const ph = 300
-      ctx.save()
-      ctx.beginPath()
-      ctx.roundRect(px, py, pw, ph, 12)
-      ctx.clip()
-      if (img) {
-        const s = Math.max(pw / img.width, ph / img.height)
-        const iw = img.width * s
-        const ih = img.height * s
-        ctx.drawImage(img, px + (pw - iw) / 2, py + (ph - ih) / 2, iw, ih)
-      } else {
-        ctx.fillStyle = '#222833'
-        ctx.fillRect(px, py, pw, ph)
-      }
-      ctx.restore()
-
-      // Flag badge, name, nickname.
-      ctx.textBaseline = 'middle'
-      ctx.textAlign = 'left'
-      ctx.font = '46px "Apple Color Emoji", "Segoe UI Emoji", sans-serif'
-      ctx.fillText(f.flag, px + 6, py + 30)
-      ctx.textAlign = 'center'
-      ctx.fillStyle = '#f0c46a'
-      ctx.font = `700 30px ${SERIF}`
-      ctx.fillText(f.name, W / 2, 360)
-      ctx.fillStyle = '#cfc3aa'
-      ctx.font = `400 22px ${SANS}`
-      ctx.fillText(f.nick, W / 2, 404)
-    }
-
     const texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
-    texture.anisotropy = 4
-    let loaded: HTMLImageElement | null = null
+    texture.anisotropy = 16
+    const STEPS: { n: string; school: string; desc: string; color: string }[] = [
+      {
+        n: '1',
+        school: "Reader's Public High School",
+        desc: 'Completed my lower level of school education.',
+        color: '#39d0ff',
+      },
+      {
+        n: '2',
+        school: 'Shree Siddhababa Secondary School',
+        desc: 'Completed my secondary level of school education.',
+        color: '#f0c46a',
+      },
+      {
+        n: '3',
+        school: 'Herald College Kathmandu',
+        desc: 'Completed undergraduate in this college.',
+        color: '#7ee08a',
+      },
+    ]
     const render = () => {
-      draw(loaded)
+      const ctx = canvas.getContext('2d')!
+      ctx.clearRect(0, 0, W, Hc)
+      const colW = W / 3
+      const circleY = 84
+
+      // The connecting timeline behind the number circles.
+      const grad = ctx.createLinearGradient(colW / 2, 0, W - colW / 2, 0)
+      grad.addColorStop(0, STEPS[0].color)
+      grad.addColorStop(0.5, STEPS[1].color)
+      grad.addColorStop(1, STEPS[2].color)
+      ctx.strokeStyle = grad
+      ctx.lineWidth = 6
+      ctx.beginPath()
+      ctx.moveTo(colW / 2, circleY)
+      ctx.lineTo(W - colW / 2, circleY)
+      ctx.stroke()
+
+      STEPS.forEach((step, i) => {
+        const cx = colW * i + colW / 2
+
+        // Glowing numbered circle.
+        ctx.save()
+        ctx.shadowColor = step.color
+        ctx.shadowBlur = 30
+        ctx.fillStyle = step.color
+        ctx.beginPath()
+        ctx.arc(cx, circleY, 44, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.restore()
+        ctx.fillStyle = '#10141e'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.font = `800 46px ${SANS}`
+        ctx.fillText(step.n, cx, circleY + 2)
+        ctx.textBaseline = 'alphabetic'
+
+        // School name (vibrant, may wrap to two lines) + description.
+        ctx.fillStyle = step.color
+        ctx.font = `700 34px ${SERIF}`
+        const nameLines = this.wrapText(ctx, step.school, colW - 90)
+        nameLines.forEach((line, li) => ctx.fillText(line, cx, 188 + li * 42))
+        const descY = 188 + nameLines.length * 42 + 14
+        ctx.fillStyle = '#ded5c2'
+        ctx.font = `400 26px ${SANS}`
+        const descLines = this.wrapText(ctx, step.desc, colW - 90)
+        descLines.forEach((line, li) => ctx.fillText(line, cx, descY + li * 36))
+      })
       texture.needsUpdate = true
     }
     render()
     this.textRedraws.push(render)
-    const img = new Image()
-    img.onload = () => {
-      loaded = img
-      render()
-    }
-    img.src = '/textures/fighters/' + f.img + '.jpg'
     return texture
   }
 
@@ -822,6 +1102,7 @@ export default class Interior {
 
   private onClick() {
     if (this.experience.navigation.scrollProgress < SURFACE_END) return
+    if (this.keypadOpen) return // the keypad overlay handles its own clicks
 
     // A project frame always opens its link.
     const proj = this.raycaster.intersectObjects(this.clickable)[0]
@@ -830,16 +1111,116 @@ export default class Interior {
       return
     }
 
+    const hit = this.raycaster.intersectObjects(this.doorTargets)[0]
+    const door = hit ? (hit.object.userData.door as DoorInfo) : null
+
     if (this.focus === 'hub') {
-      const hit = this.raycaster.intersectObjects(this.doorTargets)[0]
-      if (hit) {
-        const door = hit.object.userData.door as DoorInfo
-        door.target = 1 // unlock + open
+      if (!door) return
+      if (door.locked) {
+        // The private door asks for its passcode; other doors unlock on touch.
+        if (door.room === 'private') this.openKeypad(door)
+        else door.locked = false
+        return
+      }
+      door.target = 1 // open + walk in
+      this.focus = door.room
+    } else {
+      // Inside a room, touching YOUR door toggles its lock: close+lock, then
+      // touch again to unlock+open. Clicking anywhere else returns to the hub.
+      if (door && door.room === this.focus) {
+        if (door.target > 0) {
+          door.target = 0
+          door.locked = true
+        } else {
+          door.locked = false
+          door.target = 1
+        }
+        return
+      }
+      this.focus = 'hub'
+    }
+  }
+
+  // ---- Passcode keypad (private room) -------------------------------------
+
+  private openKeypad(door: DoorInfo) {
+    this.keypadDoor = door
+    this.keypadCode = ''
+    this.keypadOpen = true
+    this.updateKeypadDisplay()
+    this.keypadEl.classList.add('is-open')
+  }
+
+  private closeKeypad() {
+    this.keypadOpen = false
+    this.keypadEl.classList.remove('is-open')
+  }
+
+  private pressKey(key: string) {
+    if (key === 'back') {
+      this.keypadCode = this.keypadCode.slice(0, -1)
+      this.updateKeypadDisplay()
+      return
+    }
+    if (this.keypadCode.length >= 6) return
+    this.keypadCode += key
+    this.updateKeypadDisplay()
+    if (this.keypadCode.length < 6) return
+
+    if (this.keypadCode === PASSCODE) {
+      // Unlock, swing open and walk in.
+      const door = this.keypadDoor
+      this.closeKeypad()
+      if (door) {
+        door.locked = false
+        door.target = 1
         this.focus = door.room
       }
     } else {
-      this.focus = 'hub' // click anywhere in a room to go back
+      // Wrong code: flash red and clear.
+      this.keypadEl.classList.add('is-wrong')
+      setTimeout(() => {
+        this.keypadEl.classList.remove('is-wrong')
+        this.keypadCode = ''
+        this.updateKeypadDisplay()
+      }, 450)
     }
+  }
+
+  private updateKeypadDisplay() {
+    const dots = this.keypadEl.querySelector('.keypad-display')
+    if (dots) {
+      dots.textContent =
+        '● '.repeat(this.keypadCode.length).trim() + ' ○'.repeat(6 - this.keypadCode.length)
+    }
+  }
+
+  private buildKeypad() {
+    const el = document.createElement('div')
+    el.className = 'keypad'
+    el.innerHTML =
+      '<div class="keypad-title">Private · Enter Passcode</div>' +
+      '<div class="keypad-display"></div>' +
+      '<div class="keypad-grid"></div>' +
+      '<button class="keypad-close" type="button">Cancel</button>'
+    // Keep keypad clicks away from the window click handler (room navigation).
+    el.addEventListener('click', (e) => e.stopPropagation())
+
+    const grid = el.querySelector('.keypad-grid')!
+    for (const key of ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'back']) {
+      if (key === '') {
+        grid.appendChild(document.createElement('span'))
+        continue
+      }
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.textContent = key === 'back' ? '⌫' : key
+      b.addEventListener('click', () => this.pressKey(key))
+      grid.appendChild(b)
+    }
+    el.querySelector('.keypad-close')!.addEventListener('click', () => this.closeKeypad())
+    document.body.appendChild(el)
+    return el
   }
 
   // ---- Frame loop --------------------------------------------------------
@@ -849,16 +1230,12 @@ export default class Interior {
     const camera = this.experience.camera.instance
     this.raycaster.setFromCamera(this.pointer, camera)
 
-    if (quality.shadows && !this.shadowPrimed) {
-      for (const spot of this.spots) spot.shadow.needsUpdate = true
-      this.shadowPrimed = true
-    }
-
-    // Doors swing open + padlocks vanish once unlocked.
+    // Doors swing open/closed (relative to their closed baseRot); the brass
+    // padlock shows only while LOCKED.
     for (const door of this.doors) {
-      const goal = door.openSign * (Math.PI * 0.6) * door.target
+      const goal = door.baseRot + door.openSign * (Math.PI * 0.6) * door.target
       door.pivot.rotation.y += (goal - door.pivot.rotation.y) * 0.12
-      const lockGoal = door.target > 0 ? 0 : 1
+      const lockGoal = door.locked ? 1 : 0
       door.lock.scale.lerp(new THREE.Vector3(lockGoal, lockGoal, lockGoal), 0.15)
     }
 
@@ -904,6 +1281,7 @@ export default class Interior {
       this.focus = 'hub'
       this.camReady = false
       this.hintEl.classList.remove('is-visible')
+      if (this.keypadOpen) this.closeKeypad()
       return
     }
 
@@ -912,11 +1290,12 @@ export default class Interior {
     let goalLook: THREE.Vector3
 
     if (this.focus === 'hub') {
-      // Free mouse-look: turn to see the left / front / right doors.
+      // Free mouse-look: turn to see all FOUR doors — push the mouse to a side
+      // edge to spin right round to the Private door on the back wall.
       goalPos = o.clone().add(HUB_CAM)
       const px = THREE.MathUtils.clamp(this.pointer.x, -1, 1)
       const py = THREE.MathUtils.clamp(this.pointer.y, -1, 1)
-      const yaw = px * 1.15 // up to ~66° each side
+      const yaw = px * Math.PI // full 180° each side
       const pitch = py * 0.2
       const dir = new THREE.Vector3(
         Math.sin(yaw) * Math.cos(pitch),
@@ -925,13 +1304,14 @@ export default class Interior {
       )
       goalLook = goalPos.clone().add(dir.multiplyScalar(14))
     } else {
-      // In a room the camera is fixed, but you can look around with the pointer.
+      // In a room the camera is fixed, but you can look around with the pointer
+      // — all the way round, so you can turn back and lock the door behind you.
       const v = VIEWS[this.focus]
       goalPos = o.clone().add(v.pos)
       const px = THREE.MathUtils.clamp(this.pointer.x, -1, 1)
       const py = THREE.MathUtils.clamp(this.pointer.y, -1, 1)
       const dir = o.clone().add(v.look).sub(goalPos).normalize()
-      dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), -px * 0.6) // look left/right
+      dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), -px * Math.PI) // full turn
       const right = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize()
       dir.applyAxisAngle(right, py * 0.28) // look up/down
       goalLook = goalPos.clone().add(dir.multiplyScalar(20))
@@ -952,7 +1332,9 @@ export default class Interior {
       this.focus === 'hub' && this.raycaster.intersectObjects(this.doorTargets).length > 0
     document.body.style.cursor = overDoor || overInteractive ? 'pointer' : ''
     this.hintEl.textContent =
-      this.focus === 'hub' ? 'Move your mouse to look around · click a door' : 'Click anywhere to go back'
+      this.focus === 'hub'
+        ? 'Move your mouse to look around · click a door'
+        : 'Click the door to lock / unlock it · click anywhere else to go back'
     this.hintEl.classList.add('is-visible')
   }
 }

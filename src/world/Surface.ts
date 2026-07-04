@@ -14,12 +14,16 @@ export const SURFACE_ORIGIN = new THREE.Vector3(0, -1000, 0)
 
 // Where the hero house sits, relative to SURFACE_ORIGIN (street runs along -Z).
 export const HERO_OFFSET = new THREE.Vector3(0, 0, -84)
-const HERO_FILE = 'adarsh-thapa-house.glb'
+const HERO_FILE = 'new_adarshthapahouse.glb'
+const SKY_FILE = 'night_sky_visible_spectrum_monochromatic.glb'
 
 // The ship's flight over the colony (relative to SURFACE_ORIGIN).
-const ROAD_START_Z = 96
-const ROAD_HOME_Z = HERO_OFFSET.z + 10 // arrives right over the house
-const SHIP_FLY_Y = 26 // ship cruises above the rooftops
+export const ROAD_START_Z = 96
+
+// Where the moon hangs (relative to SURFACE_ORIGIN): far away and high, well
+// clear of the rooftops, so it reads as a small moon IN THE SKY (a real moon
+// only spans ~0.5° of your view) while staying inside the 600-radius sky dome.
+export const MOON_OFFSET = new THREE.Vector3(-130, 210, -480)
 
 // Family names for the houses along the main street (Adarsh's is the hero).
 const FAMILY_NAMES: [number, number, string][] = [
@@ -36,14 +40,14 @@ export default class Surface {
   scene: THREE.Scene
   group = new THREE.Group() // all surface objects, so we can hide the scene
 
-  // Warm haze for the surface. Navigation switches it on only on the surface
-  // stage (so it never fogs the solar system).
-  fog = new THREE.Fog('#e0d6c2', 80, 460)
+  // Deep-blue night haze for the surface. Navigation switches it on only on the
+  // surface stage (so it never fogs the solar system). Distant houses fade into
+  // the night horizon.
+  fog = new THREE.Fog('#0d1326', 70, 420)
 
   private clouds: THREE.Group | null = null
   private gateLeft: THREE.Group | null = null
   private gateRight: THREE.Group | null = null
-  private surfaceShip: THREE.Group | null = null
   private labels: THREE.Mesh[] = []
   private sun: THREE.DirectionalLight | null = null
   private shadowPrimed = false
@@ -65,14 +69,16 @@ export default class Surface {
   }
 
   // A large inward-facing dome with a vertical colour gradient (sky -> horizon).
+  // At night this is a deep navy fading to a faint moonlit horizon; the star
+  // dome (createNightSky) then adds glowing stars on top of it.
   createSky() {
     const sky = new THREE.Mesh(
       new THREE.SphereGeometry(600, 32, 32),
       new THREE.ShaderMaterial({
         uniforms: {
-          // Muted blue up high fading to a warm hazy horizon — golden-hour feel.
-          uTop: { value: new THREE.Color('#33506f') },
-          uBottom: { value: new THREE.Color('#e8dcc4') },
+          // Near-black navy overhead fading to a slightly lit deep-blue horizon.
+          uTop: { value: new THREE.Color('#04050d') },
+          uBottom: { value: new THREE.Color('#131d38') },
           uOffset: { value: SURFACE_ORIGIN.y },
         },
         vertexShader: /* glsl */ `
@@ -99,6 +105,7 @@ export default class Surface {
       }),
     )
     sky.position.copy(SURFACE_ORIGIN)
+    sky.renderOrder = -2 // draw before the additive star dome (renderOrder -1)
     this.group.add(sky)
   }
 
@@ -124,8 +131,9 @@ export default class Surface {
       const sprite = new THREE.Sprite(
         new THREE.SpriteMaterial({
           map: texture,
+          color: '#2b3a5e', // dim, cool night clouds
           transparent: true,
-          opacity: 0.38,
+          opacity: 0.22,
           depthWrite: false,
         }),
       )
@@ -162,14 +170,15 @@ export default class Surface {
   }
 
   createLights() {
-    // Cooler sky fill + warm ground bounce, kept low for a moodier feel.
-    const hemi = new THREE.HemisphereLight('#dfe2e8', '#4a4030', 0.7)
+    // Dim, cool moonlit sky fill with a near-black ground bounce.
+    const hemi = new THREE.HemisphereLight('#2b3a5c', '#080a12', 0.35)
     hemi.position.copy(SURFACE_ORIGIN).add(new THREE.Vector3(0, 50, 0))
     this.group.add(hemi)
 
-    // Warm, low golden-hour sun that casts shadows across the colony.
-    const sun = new THREE.DirectionalLight('#ffce8a', 2.8)
-    sun.position.copy(SURFACE_ORIGIN).add(new THREE.Vector3(60, 55, 40))
+    // Cool moon casting soft shadows across the sleeping colony. Lit from the
+    // same direction the visible moon sits (see createNightSky).
+    const sun = new THREE.DirectionalLight('#9fb4e6', 1.1)
+    sun.position.copy(SURFACE_ORIGIN).add(new THREE.Vector3(40, 85, -70))
     sun.target.position.copy(SURFACE_ORIGIN)
     this.group.add(sun.target)
     sun.castShadow = quality.shadows
@@ -189,54 +198,142 @@ export default class Surface {
     this.group.add(sun)
   }
 
+  // The night sky over the colony: the emissive star dome from the sky model,
+  // composited ADDITIVELY over the dark gradient sky so the stars glow against
+  // the deep-blue night, plus a soft glowing moon high in the sky.
+  private createNightSky() {
+    // The dome is a full-screen additive pass — skip it on low-power devices
+    // (the procedural point-stars carry the starry look on their own).
+    const source = quality.tier === 'high' ? this.experience.resources.models[SKY_FILE] : undefined
+    if (!source) {
+      this.createMoon()
+      return
+    }
+    const dome = source.clone(true)
+
+    // Keep the biggest mesh (the star sphere); hide the small centre spheres.
+    let star: THREE.Mesh | null = null
+    let best = -1
+    dome.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (!m.isMesh) return
+      const s = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3())
+      const r = Math.max(s.x, s.y, s.z)
+      if (r > best) {
+        best = r
+        star = m
+      }
+    })
+    if (!star) return
+    const keep = star as THREE.Mesh
+    dome.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (m.isMesh && m !== keep) m.visible = false
+    })
+
+    // Swap to an unlit, inside-out, additively-blended star texture: black adds
+    // nothing (the gradient shows through) while stars add light and glow.
+    const original = keep.material as THREE.MeshStandardMaterial
+    keep.material = new THREE.MeshBasicMaterial({
+      map: original.emissiveMap ?? original.map ?? null,
+      color: new THREE.Color('#cfd8ff'),
+      side: THREE.BackSide,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false,
+      fog: false,
+    })
+    keep.renderOrder = -1
+
+    const size = new THREE.Box3().setFromObject(dome).getSize(new THREE.Vector3())
+    dome.scale.multiplyScalar(1000 / (Math.max(size.x, size.y, size.z) || 1))
+    const center = new THREE.Box3().setFromObject(dome).getCenter(new THREE.Vector3())
+    dome.position.copy(SURFACE_ORIGIN).sub(center)
+    this.group.add(dome)
+
+    this.createMoon()
+  }
+
+  // A detailed moon, framed above the far end of the street so it stays in
+  // view during the level walk (no glow halo). The real lunar photo gives the
+  // craters + maria; a bump map (same image) adds relief the moonlight rakes
+  // across; a low emissive keeps the shadowed side readable (earthshine).
+  private createMoon() {
+    const loader = this.experience.resources.textureLoader
+    const moonColor = loader.load('/textures/planets/moon_1024.jpg')
+    moonColor.colorSpace = THREE.SRGBColorSpace
+    const moonBump = loader.load('/textures/planets/moon_1024.jpg') // linear, for relief
+
+    const moon = new THREE.Mesh(
+      new THREE.SphereGeometry(11, 64, 64),
+      new THREE.MeshStandardMaterial({
+        map: moonColor,
+        bumpMap: moonBump,
+        bumpScale: 0.7,
+        emissive: new THREE.Color('#8b97b8'),
+        emissiveMap: moonColor,
+        emissiveIntensity: 0.42,
+        roughness: 1,
+        metalness: 0,
+        fog: false,
+      }),
+    )
+    moon.position.copy(SURFACE_ORIGIN).add(MOON_OFFSET)
+    moon.rotation.y = -0.7 // turn a nicer, maria-rich face toward the camera
+    this.group.add(moon)
+  }
+
+  // A field of bright point-stars filling the sky above the colony. The dome
+  // texture alone is too faint, so these guarantee a genuinely starry night.
+  private createStars() {
+    const count = 1600
+    const positions = new Float32Array(count * 3)
+    const colors = new Float32Array(count * 3)
+    const color = new THREE.Color()
+    for (let i = 0; i < count; i++) {
+      const r = 380 + Math.random() * 150
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(Math.random()) // upper hemisphere only (never underground)
+      positions[i * 3] = SURFACE_ORIGIN.x + r * Math.sin(phi) * Math.cos(theta)
+      positions[i * 3 + 1] = SURFACE_ORIGIN.y + 15 + r * Math.cos(phi)
+      positions[i * 3 + 2] = SURFACE_ORIGIN.z + r * Math.sin(phi) * Math.sin(theta)
+      // Mostly white, with a scatter of cool-blue and warm-gold stars.
+      color.setHSL(Math.random() < 0.5 ? 0.6 : 0.09, 0.3, 0.75 + Math.random() * 0.25)
+      colors[i * 3] = color.r
+      colors[i * 3 + 1] = color.g
+      colors[i * 3 + 2] = color.b
+    }
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    const stars = new THREE.Points(
+      geo,
+      new THREE.PointsMaterial({
+        size: 2.2,
+        sizeAttenuation: false, // constant pixel size -> crisp, always-visible stars
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false,
+        fog: false,
+      }),
+    )
+    this.group.add(stars)
+  }
+
   // ---- The society -------------------------------------------------------
 
   private createSociety() {
     const models = this.experience.resources.models
+    this.createNightSky()
+    this.createStars()
     this.createStreet()
     this.placeHouses(models)
-    this.placeLandmark(models)
-    this.placeHorseScene(models)
-    this.placeVehicles(models)
     this.scatterNature(models)
     this.placeStreetProps(models)
     this.createGate()
-    this.createSpaceship()
     this.createEntranceBoard()
     this.placeNames()
-  }
-
-  // The spaceship that carries you over the colony to your house.
-  private createSpaceship() {
-    const source = this.experience.resources.models['SpaceShip.glb']
-    if (!source) return
-    const ship = source.clone(true)
-    const box = new THREE.Box3().setFromObject(ship)
-    const size = box.getSize(new THREE.Vector3())
-    ship.scale.setScalar(11 / (Math.max(size.x, size.z) || 1))
-    ship.rotation.y = Math.PI // nose pointing down the street (-Z)
-    ship.position.copy(SURFACE_ORIGIN).add(new THREE.Vector3(0, SHIP_FLY_Y, ROAD_START_Z))
-    this.group.add(ship)
-    this.surfaceShip = ship
-  }
-
-  // Flies the ship from the colony entrance over to the house for eased
-  // surface-stage progress easedT (0..1). Returns its world position so the
-  // camera can follow just behind it. It drops out of the clouds at the start.
-  flyShip(easedT: number): THREE.Vector3 | null {
-    const ship = this.surfaceShip
-    if (!ship) return null
-    const drop = THREE.MathUtils.clamp(easedT / 0.1, 0, 1) // fall out of the clouds
-    const wf = THREE.MathUtils.clamp((easedT - 0.1) / 0.9, 0, 1) // cruise across
-    const land = this.smootherstep((easedT - 0.82) / 0.18) // touch down at the end
-
-    const z = SURFACE_ORIGIN.z + THREE.MathUtils.lerp(ROAD_START_Z, ROAD_HOME_Z, wf)
-    const cruiseY = SHIP_FLY_Y + (1 - drop) * 55
-    // Cruise above the rooftops, then descend to land in front of the house.
-    const y = SURFACE_ORIGIN.y + THREE.MathUtils.lerp(cruiseY, 3.5, land)
-    const pos = new THREE.Vector3(SURFACE_ORIGIN.x, y, z)
-    ship.position.copy(pos)
-    return pos
   }
 
   // A big "Thapa Colony" board on posts over the colony entrance.
@@ -304,7 +401,7 @@ export default class Surface {
 
     const texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
-    texture.anisotropy = 4
+    texture.anisotropy = 16
     return texture
   }
 
@@ -345,62 +442,63 @@ export default class Surface {
     // A multi-block colony: four columns of homes (an inner + outer row on each
     // side of the main street), cycling through all the house models. The main
     // street down the middle stays completely clear for the walk home.
-    const pool = [
-      'Fantasy House.glb', 'Fantasy House-2.glb', 'Fantasy Inn.glb', 'House-2.glb',
-      'House-3.glb', 'House-4.glb', 'House-5.glb', 'Fantasy Sawmill.glb',
-      'Fantasy Stable.glb', 'Cottage.glb', 'Farm house.glb', 'Barn.glb', 'Barn-2.glb',
+    // Per-model config: each house gets a hand-tuned target HEIGHT (so they line
+    // up at a consistent roofline instead of auto-scaling to wildly different
+    // sizes) and a `face` offset that turns its authored front toward the road.
+    // The broken low-poly spike and the oversized "modern_home" scene are dropped.
+    // `face` corrects each model's authored front to point toward the road.
+    // modern_house's garage door is on its -Z side, so it needs a half turn;
+    // the other two present their facade along Z already. If any model still
+    // looks backward, flip its `face` between 0 and Math.PI.
+    // `grill` = this model is a single flat mesh (can't be multi-toned), so we
+    // bolt a procedural metal grill/railing across its front to add parts+colour.
+    const HOUSES: { file: string; height: number; face: number; grill?: boolean }[] = [
+      { file: 'modern_house.glb', height: 11, face: Math.PI },
+      { file: 'modern_house-2.glb', height: 12, face: 0, grill: true },
+      { file: 'vianney_house_2.glb', height: 12, face: 0 },
     ]
     const columns = [
-      { x: -19, rot: Math.PI / 2 }, // left inner, faces the main street
-      { x: -49, rot: -Math.PI / 2 }, // left outer, faces the back street
-      { x: 19, rot: -Math.PI / 2 }, // right inner
-      { x: 49, rot: Math.PI / 2 }, // right outer
+      { x: -19, rot: Math.PI / 2 }, // left inner  -> faces +X (road)
+      { x: -49, rot: Math.PI / 2 }, // left outer  -> faces +X (road)
+      { x: 19, rot: -Math.PI / 2 }, // right inner -> faces -X (road)
+      { x: 49, rot: -Math.PI / 2 }, // right outer -> faces -X (road)
     ]
     const rows = [84, 66, 48, 22, 4, -14, -40, -58]
 
+    // A warm, cohesive colony palette — clay, sand, ochre, sage, dusty blue,
+    // brick, cream — for each house's WALLS. Assigned so neighbours don't repeat.
+    const PALETTE = ['#c06a48', '#d8b487', '#b98a3e', '#8f9e70', '#7f96a3', '#a9533f', '#e3d3b6']
+    // Accent colours painted onto the other parts — garage doors, grills,
+    // ladders, ceiling beams, railings and trim — so each house is multi-tone.
+    const ACCENTS = ['#e8e2d4', '#39424b', '#4f7d78', '#b06a3f', '#6b7f8c', '#c9a24e']
     let i = 0
-    for (const col of columns) {
-      for (const z of rows) {
-        const file = pool[i % pool.length]
+    for (let c = 0; c < columns.length; c++) {
+      const col = columns[c]
+      for (let r = 0; r < rows.length; r++) {
+        const h = HOUSES[i % HOUSES.length]
+        const primary = PALETTE[(i + c) % PALETTE.length]
+        // Rotate the accent order per house so the mixture varies down the street.
+        const accents = ACCENTS.map((_, k) => ACCENTS[(k + i) % ACCENTS.length])
         i++
-        if (models[file]) this.placeModel(models[file], col.x, z, col.rot, 16, 'footprint')
+        const src = models[h.file]
+        if (src) {
+          this.placeModel(src, col.x, rows[r], col.rot + h.face, h.height, 'height', true, [
+            primary,
+            ...accents,
+          ])
+          // Plain single-mesh houses get a real grill fence across their front.
+          if (h.grill) this.addFrontGrill(col.x, rows[r], accents)
+        }
       }
     }
 
-    // Your house at the head of the street, facing back toward the camera.
+    // Your house at the head of the street. Its front facade (the staircases /
+    // entrance) is on the model's +Z side, which already faces the approaching
+    // camera, so no rotation is needed.
     const hero = models[HERO_FILE]
-    if (hero) this.placeModel(hero, HERO_OFFSET.x, HERO_OFFSET.z, 0, 24, 'footprint')
+    if (hero) this.placeModel(hero, HERO_OFFSET.x, HERO_OFFSET.z, 0, 28, 'footprint')
   }
 
-  // The lighthouse stands tall behind the hero house as a landmark.
-  private placeLandmark(models: Record<string, THREE.Group>) {
-    const lighthouse = models['Light House.glb']
-    if (lighthouse) this.placeModel(lighthouse, 36, -104, 0, 38, 'height')
-  }
-
-  // A horse-drawn carriage parked off the road, plus a horse by the trough.
-  private placeHorseScene(models: Record<string, THREE.Group>) {
-    if (models['carriage.glb']) this.placeModel(models['carriage.glb'], -15, 30, Math.PI, 8, 'footprint')
-    if (models['Horse.glb']) this.placeModel(models['Horse.glb'], -15, 22, Math.PI, 5, 'height')
-
-    // A second horse drinking by the stable's water trough.
-    if (models['Wood Water Trough.glb']) this.placeModel(models['Wood Water Trough.glb'], 16, 42, 0, 4, 'footprint')
-    if (models['Horse.glb']) this.placeModel(models['Horse.glb'], 19, 42, -Math.PI / 2, 5, 'height')
-  }
-
-  // Vintage cars parked on the frontage (off the road) beside the houses.
-  private placeVehicles(models: Record<string, THREE.Group>) {
-    const park: [string, number, number, number][] = [
-      ['Old Car.glb', 15, HERO_OFFSET.z + 20, Math.PI], // beside your house
-      ['1972 Bursley Defiance.glb', -15, 52, 0],
-      ['Buggy.glb', 15, -22, Math.PI],
-      ['Police Car.glb', -15, -44, 0],
-      ['Old Truck.glb', 15, 6, Math.PI],
-    ]
-    for (const [file, x, z, rot] of park) {
-      if (models[file]) this.placeModel(models[file], x, z, rot, 6, 'footprint')
-    }
-  }
 
   private scatterNature(models: Record<string, THREE.Group>) {
     const trees = ['Tree.glb', 'Maple Trees.glb', 'Twisted Tree.glb']
@@ -428,33 +526,81 @@ export default class Surface {
     }
   }
 
-  // Gas lamp posts line the edges of the main street and the back streets.
+  // Street lights lining both kerbs of the main avenue — each one glows at night.
   private placeStreetProps(models: Record<string, THREE.Group>) {
-    const lamp = models['Lamp Post.glb']
+    const lamp = models['street_light.glb']
     if (!lamp) return
+    const glow = this.makeCloudTexture() // shared radial texture for the halos
     for (const z of [80, 56, 32, 8, -16, -40, -64, -88]) {
-      this.placeModel(lamp, -9.5, z, Math.PI / 2, 6, 'height')
-      this.placeModel(lamp, 9.5, z, -Math.PI / 2, 6, 'height')
+      this.placeModel(lamp, -9.5, z, Math.PI / 2, 7, 'height')
+      this.placeModel(lamp, 9.5, z, -Math.PI / 2, 7, 'height')
+      this.addLampGlow(-9.5, z, glow)
+      this.addLampGlow(9.5, z, glow)
     }
+
+    // Real cast light is EXPENSIVE (every point light adds per-pixel cost to
+    // the whole colony), so instead of one per lamp we share a few pools of
+    // warm light down the centre of the road. The bulbs + halos above carry
+    // the "every lamp glows" look.
+    if (quality.tier === 'high') {
+      for (const z of [68, 20, -28, -76]) {
+        const light = new THREE.PointLight('#ffcf87', 30, 42, 2)
+        light.position.set(SURFACE_ORIGIN.x, SURFACE_ORIGIN.y + 6.5, SURFACE_ORIGIN.z + z)
+        this.group.add(light)
+      }
+    }
+  }
+
+  // Make a lamp glow: a bright bulb + an additive halo (no per-lamp light).
+  private addLampGlow(x: number, z: number, glowTex: THREE.Texture) {
+    const roadDir = x < 0 ? 1 : -1 // the lamp head overhangs toward the road
+    const gx = SURFACE_ORIGIN.x + x + roadDir * 1.2
+    const cz = SURFACE_ORIGIN.z + z
+    const gy = SURFACE_ORIGIN.y + 6.3 // near the top of a ~7-tall lamp
+
+    const bulb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.28, 12, 12),
+      new THREE.MeshBasicMaterial({ color: '#fff2d0', fog: false }),
+    )
+    bulb.position.set(gx, gy, cz)
+    this.group.add(bulb)
+
+    const halo = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: glowTex,
+        color: '#ffcf87',
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        opacity: 0.9,
+        fog: false,
+      }),
+    )
+    halo.scale.set(5, 5, 1)
+    halo.position.set(gx, gy, cz)
+    this.group.add(halo)
   }
 
   private createStreet() {
     const loader = this.experience.resources.textureLoader
     const G = '/textures/ground/'
 
-    // Textured cobblestone for the MAIN street (the clean walking path).
+    // Clean tiled cobblestone for the MAIN street. Max anisotropic filtering
+    // keeps the stones crisp all the way down the road instead of blurring to
+    // mush in the distance (the biggest sharpness win for a walked street).
+    const maxAniso = this.experience.renderer.instance.capabilities.getMaxAnisotropy()
     const tile = (texture: THREE.Texture) => {
       texture.wrapS = texture.wrapT = THREE.RepeatWrapping
       texture.repeat.set(3, 46)
+      texture.anisotropy = maxAniso
       return texture
     }
     const diff = tile(loader.load(G + 'cobblestone_diff.jpg'))
     diff.colorSpace = THREE.SRGBColorSpace
     const normal = tile(loader.load(G + 'cobblestone_nor_gl.jpg'))
     const rough = tile(loader.load(G + 'cobblestone_rough.jpg'))
-
     const main = new THREE.Mesh(
-      new THREE.PlaneGeometry(16, 250),
+      new THREE.PlaneGeometry(16, 260),
       new THREE.MeshStandardMaterial({
         map: diff,
         normalMap: normal,
@@ -464,7 +610,8 @@ export default class Surface {
       }),
     )
     main.rotation.x = -Math.PI / 2
-    main.position.copy(SURFACE_ORIGIN).add(new THREE.Vector3(0, 0.15, -16))
+    main.position.copy(SURFACE_ORIGIN).add(new THREE.Vector3(0, 0.15, -30))
+    main.receiveShadow = true
     this.group.add(main)
 
     // Secondary roads (back streets + cross streets) use a plain stone colour.
@@ -499,6 +646,7 @@ export default class Surface {
     target: number,
     mode: 'footprint' | 'height',
     cast = true,
+    tint?: string | string[],
   ) {
     const model = source.clone(true)
     model.rotation.y = rotationY
@@ -522,7 +670,100 @@ export default class Surface {
         mesh.receiveShadow = true
       }
     })
+
+    if (tint) this.repaint(model, Array.isArray(tint) ? tint : [tint])
     this.group.add(model)
+  }
+
+  // Repaint a model in multiple colours. The MOST-used material (the walls /
+  // roof) takes the primary colour; every other opaque material (garage door,
+  // grills, ladder, ceiling beams, railings, trim…) cycles through the accent
+  // colours — so the house reads as a real, multi-tone painted building. Glass
+  // is left untouched so windows stay glassy. Each source material is cloned
+  // once and shared, so this stays cheap across dozens of houses.
+  private repaint(model: THREE.Object3D, colors: string[]) {
+    const isGlass = (m: THREE.Material) =>
+      m.transparent || (m as THREE.MeshStandardMaterial).opacity < 1 || /glass|vitre|verre/i.test(m.name)
+
+    const usage = new Map<THREE.Material, number>()
+    model.traverse((o) => {
+      const mesh = o as THREE.Mesh
+      if (!mesh.isMesh) return
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      for (const m of mats) if (m && !isGlass(m)) usage.set(m, (usage.get(m) ?? 0) + 1)
+    })
+
+    const accents = colors.length > 1 ? colors.slice(1) : colors
+    const ranked = [...usage.keys()].sort((a, b) => (usage.get(b) ?? 0) - (usage.get(a) ?? 0))
+    const colorFor = new Map<THREE.Material, THREE.Color>()
+    ranked.forEach((m, i) => {
+      const hex = i === 0 ? colors[0] : accents[(i - 1) % accents.length]
+      colorFor.set(m, new THREE.Color(hex))
+    })
+
+    const clones = new Map<THREE.Material, THREE.Material>()
+    const paint = (m: THREE.Material) => {
+      if (!colorFor.has(m)) return m // glass / unmatched -> leave as-is
+      let c = clones.get(m)
+      if (!c) {
+        c = (m as THREE.MeshStandardMaterial).clone()
+        ;(c as THREE.MeshStandardMaterial).color.copy(colorFor.get(m)!)
+        clones.set(m, c)
+      }
+      return c
+    }
+    model.traverse((o) => {
+      const mesh = o as THREE.Mesh
+      if (!mesh.isMesh) return
+      mesh.material = Array.isArray(mesh.material) ? mesh.material.map(paint) : paint(mesh.material)
+    })
+  }
+
+  // Build a metal grill / railing fence across a house's road-facing front,
+  // with dark balusters, a coloured top & bottom rail and accent end-posts.
+  // Used for the plain single-mesh house so it gains grills + extra colour.
+  private addFrontGrill(centerX: number, z: number, accents: string[]) {
+    const roadDir = centerX < 0 ? 1 : -1 // toward the road (x = 0)
+    const gx = SURFACE_ORIGIN.x + centerX + roadDir * 6.5
+    const gz = SURFACE_ORIGIN.z + z
+    const gy = SURFACE_ORIGIN.y
+    const span = 14
+    const H = 3.2
+
+    const barMat = new THREE.MeshStandardMaterial({ color: '#2a2d33', roughness: 0.5, metalness: 0.6 })
+    const railMat = new THREE.MeshStandardMaterial({ color: accents[0] ?? '#c9a24e', roughness: 0.6, metalness: 0.25 })
+    const postMat = new THREE.MeshStandardMaterial({ color: accents[1] ?? '#4f7d78', roughness: 0.7, metalness: 0.2 })
+
+    const group = new THREE.Group()
+
+    // Vertical balusters (shared geometry so the whole fence is one cheap set).
+    const barGeo = new THREE.BoxGeometry(0.12, H, 0.12)
+    const count = Math.round(span / 0.85)
+    for (let k = 0; k <= count; k++) {
+      const bar = new THREE.Mesh(barGeo, barMat)
+      bar.position.set(gx, gy + H / 2, gz - span / 2 + (k / count) * span)
+      bar.castShadow = true
+      group.add(bar)
+    }
+
+    // Top (accent) and bottom (metal) rails running the length of the fence.
+    const railGeo = new THREE.BoxGeometry(0.18, 0.18, span)
+    const top = new THREE.Mesh(railGeo, railMat)
+    top.position.set(gx, gy + H - 0.25, gz)
+    const bottom = new THREE.Mesh(railGeo, barMat)
+    bottom.position.set(gx, gy + 0.3, gz)
+    group.add(top, bottom)
+
+    // Chunkier accent end-posts.
+    const postGeo = new THREE.BoxGeometry(0.34, H + 0.5, 0.34)
+    for (const pz of [gz - span / 2, gz + span / 2]) {
+      const post = new THREE.Mesh(postGeo, postMat)
+      post.position.set(gx, gy + (H + 0.5) / 2, pz)
+      post.castShadow = true
+      group.add(post)
+    }
+
+    this.group.add(group)
   }
 
   update() {

@@ -17,8 +17,10 @@ export default class Environment {
     this.experience = new Experience()
     this.scene = this.experience.scene
     this.setEnvironmentMap()
-    this.setLights()
-    // No fog in space — the starfield should stay crisp into the distance.
+    // NOTE: no global lights here! Anything added to the scene root lights ALL
+    // three stages at once (a global daylight directional was washing out the
+    // night colony and the dark interior). Space's lights live in
+    // SolarSystem.group; each stage lights itself.
   }
 
   setEnvironmentMap() {
@@ -36,27 +38,4 @@ export default class Environment {
     })
   }
 
-  setLights() {
-    // With an environment map doing a lot of the lighting, the direct lights
-    // are now mainly for shaping highlights and adding the coloured rim glow.
-    const ambient = new THREE.AmbientLight('#ffffff', 0.15)
-    this.scene.add(ambient)
-
-    const key = new THREE.DirectionalLight('#ffffff', 2)
-    key.position.set(3, 5, 4)
-    this.scene.add(key)
-
-    const rim = new THREE.PointLight('#5b8cff', 45, 60)
-    rim.position.set(-5, 2, -8)
-    this.scene.add(rim)
-
-    // Live controls in #debug mode.
-    const gui = this.experience.debug.gui
-    if (gui) {
-      const folder = gui.addFolder('Environment')
-      folder.add(ambient, 'intensity', 0, 2).name('ambient')
-      folder.add(key, 'intensity', 0, 5).name('key light')
-      folder.add(rim, 'intensity', 0, 100).name('rim light')
-    }
-  }
 }

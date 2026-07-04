@@ -7,33 +7,17 @@ import EventEmitter from '../utils/EventEmitter'
 // (public/models/<category>/<file>). Drop a file in a folder, add its name
 // here, and it loads automatically.
 export const MODEL_MANIFEST: Record<string, string[]> = {
-  spaceship: ['SpaceShip.glb'],
-  'vintage-house': [
-    'Fantasy House.glb',
-    'Fantasy House-2.glb',
-    'Fantasy Inn.glb',
-    'Fantasy Sawmill.glb',
-    'Fantasy Stable.glb',
-    'House-2.glb',
-    'House-3.glb',
-    'House-4.glb',
-    'House-5.glb',
+  'modern-house-architecture': [
+    'modern_house.glb',
+    'modern_house-2.glb',
+    'vianney_house_2.glb',
+    'raven.glb', // the spaceship
+    'first_person_arms.glb', // the hands you walk + explore with
+    'street_light.glb', // modern street lights
   ],
-  houses: [
-    'adarsh-thapa-house.glb',
-    'Cottage.glb',
-    'Farm house.glb',
-    'Barn.glb',
-    'Barn-2.glb',
-    'Light House.glb',
-  ],
-  'vintage-cars': [
-    'Old Car.glb',
-    '1972 Bursley Defiance.glb',
-    'Buggy.glb',
-    'Old Truck.glb',
-    'Police Car.glb',
-  ],
+  houses: ['new_adarshthapahouse.glb'],
+  sky: ['night_sky_visible_spectrum_monochromatic.glb'], // deep-space star dome
+
   nature: [
     'Tree.glb',
     'Maple Trees.glb',
@@ -42,11 +26,7 @@ export const MODEL_MANIFEST: Record<string, string[]> = {
     'Rose bush.glb',
     'Rocks.glb',
     'Dandelions.glb',
-    'Horse.glb',
-    'carriage.glb',
-    'Wood Water Trough.glb',
   ],
-  props: ['Lamp Post.glb', 'Post Lantern.glb'],
   interior: ['Chandelier.glb'],
   'interior-design': [
     'Cozy Kitchen.glb',
@@ -131,12 +111,17 @@ export default class Resources extends EventEmitter {
     if (this.loaded === this.total) this.finish()
   }
 
-  // Hide the loading screen and tell the app the models are ready.
+  // Tell the app the models are ready. The loading screen stays up while
+  // Experience warms up (pre-renders) all three stages, then calls revealScene.
   private finish() {
     if (this.barEl) this.barEl.style.transform = 'scaleX(1)'
+    this.trigger('ready')
+  }
+
+  // Called by Experience once every stage is compiled + uploaded to the GPU.
+  revealScene() {
     if (this.loadingEl) this.loadingEl.classList.add('is-hidden')
     // Make sure we reveal the scene from the very top of the journey.
     window.scrollTo(0, 0)
-    this.trigger('ready')
   }
 }

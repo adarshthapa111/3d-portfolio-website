@@ -13,9 +13,13 @@ export interface Quality {
 function detect(): Quality {
   const dpr = window.devicePixelRatio || 1
   const coarsePointer = window.matchMedia('(pointer: coarse)').matches // touch device
-  const smallScreen = Math.min(window.innerWidth, window.innerHeight) < 720
+  const tinyScreen = Math.min(window.innerWidth, window.innerHeight) < 500 // phone-sized
   const fewCores = (navigator.hardwareConcurrency || 8) <= 4
-  const low = coarsePointer || smallScreen || fewCores
+  // Only downgrade genuinely weak hardware: a touch phone/tablet, a very small
+  // screen, or a low-core machine. A normal laptop (fine pointer, 8+ cores) —
+  // even in a short browser window — stays on HIGH so it renders at full,
+  // sharp, anti-aliased resolution.
+  const low = (coarsePointer && tinyScreen) || (coarsePointer && fewCores) || tinyScreen
 
   if (low) {
     return {

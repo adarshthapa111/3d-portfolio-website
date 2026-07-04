@@ -76,17 +76,67 @@ export default class SolarSystem {
     this.createEarth()
 
     const resources = this.experience.resources
-    if (resources.models['SpaceShip.glb']) this.createShip()
+    if (resources.models['raven.glb']) this.createShip()
     else resources.on('ready', () => this.createShip())
+
+    const SKY = 'night_sky_visible_spectrum_monochromatic.glb'
+    if (resources.models[SKY]) this.createSkyDome()
+    else resources.on('ready', () => this.createSkyDome())
+  }
+
+  // The deep-space backdrop: a giant emissive star dome surrounding everything.
+  // The model bundles the big star sphere plus two small centre spheres; we keep
+  // only the largest mesh, flip it inside-out (BackSide) and blow it up so it
+  // sits far beyond the planets and the point-star shell.
+  private createSkyDome() {
+    const source = this.experience.resources.models['night_sky_visible_spectrum_monochromatic.glb']
+    if (!source) return
+    const sky = source.clone(true)
+
+    // Find the biggest mesh (the star sphere) and hide the small centre spheres.
+    let dome: THREE.Mesh | null = null
+    let best = -1
+    sky.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (!m.isMesh) return
+      const s = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3())
+      const r = Math.max(s.x, s.y, s.z)
+      if (r > best) {
+        best = r
+        dome = m
+      }
+    })
+    if (!dome) return
+    const keep = dome as THREE.Mesh
+    sky.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (m.isMesh && m !== keep) m.visible = false
+    })
+
+    // Render the star texture as an unlit, inside-out backdrop that ignores fog
+    // and draws before everything else.
+    const mats = Array.isArray(keep.material) ? keep.material : [keep.material]
+    for (const mat of mats) {
+      const sm = mat as THREE.MeshStandardMaterial
+      sm.side = THREE.BackSide
+      sm.fog = false
+      sm.depthWrite = false
+    }
+    keep.renderOrder = -1
+
+    // Scale the whole thing up so its radius clears the star shell (~500).
+    const size = new THREE.Box3().setFromObject(sky).getSize(new THREE.Vector3())
+    sky.scale.multiplyScalar(1800 / (Math.max(size.x, size.y, size.z) || 1))
+    this.group.add(sky)
   }
 
   private createShip() {
-    const source = this.experience.resources.models['SpaceShip.glb']
+    const source = this.experience.resources.models['raven.glb']
     if (!source) return
     const ship = source.clone(true)
     const box = new THREE.Box3().setFromObject(ship)
     const size = box.getSize(new THREE.Vector3())
-    ship.scale.setScalar(1.3 / (Math.max(size.x, size.y, size.z) || 1))
+    ship.scale.setScalar(1.6 / (Math.max(size.x, size.y, size.z) || 1))
     ship.visible = false
     this.group.add(ship)
     this.spaceship = ship
@@ -136,6 +186,15 @@ export default class SolarSystem {
     // day/night terminator.
     const sunLight = new THREE.PointLight('#fff3d6', 3, 0, 0)
     this.group.add(sunLight)
+
+    // Space's fill lights live INSIDE this group (never at the scene root —
+    // a global light would wash out the night colony and the dark interior).
+    const ambient = new THREE.AmbientLight('#ffffff', 0.15)
+    const key = new THREE.DirectionalLight('#ffffff', 2)
+    key.position.set(3, 5, 4)
+    const rim = new THREE.PointLight('#5b8cff', 45, 60)
+    rim.position.set(-5, 2, -8)
+    this.group.add(ambient, key, rim)
   }
 
   createPlanets() {
