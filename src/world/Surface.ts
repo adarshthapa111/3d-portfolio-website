@@ -39,10 +39,9 @@ export default class Surface {
   scene: THREE.Scene
   group = new THREE.Group() // all surface objects, so we can hide the scene
 
-  // Deep-blue night haze for the surface. Navigation switches it on only on the
-  // surface stage (so it never fogs the solar system). Distant houses fade into
-  // the night horizon.
-  fog = new THREE.Fog('#0d1326', 70, 420)
+  // Near-black night haze matching the sky, so distant houses fade straight
+  // into the dark horizon. Navigation switches it on only on the surface stage.
+  fog = new THREE.Fog('#0c0c15', 70, 420)
 
   private clouds: THREE.Group | null = null
   private gateLeft: THREE.Group | null = null
@@ -75,9 +74,10 @@ export default class Surface {
       new THREE.SphereGeometry(600, 32, 32),
       new THREE.ShaderMaterial({
         uniforms: {
-          // Near-black navy overhead fading to a slightly lit deep-blue horizon.
-          uTop: { value: new THREE.Color('#04050d') },
-          uBottom: { value: new THREE.Color('#131d38') },
+          // Near-black (#0b0b12 family, matching space) with the faintest lift
+          // at the horizon so rooftops still silhouette against the sky.
+          uTop: { value: new THREE.Color('#040409') },
+          uBottom: { value: new THREE.Color('#0e0e18') },
           uOffset: { value: SURFACE_ORIGIN.y },
         },
         vertexShader: /* glsl */ `

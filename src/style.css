@@ -1,5 +1,5 @@
 :root {
-  --bg: #0b0b12;
+  --bg: #040409; /* near-black, matches the space + night-sky backdrop */
   --fg: #f7f3ea;
   --muted: #a9abc4;
   --cream: #e9dfca; /* warm narrative text — matches the vintage world */

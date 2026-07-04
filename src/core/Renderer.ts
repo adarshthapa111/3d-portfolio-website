@@ -60,7 +60,9 @@ export default class Renderer {
     this.instance.toneMappingExposure = 1.1
     this.instance.shadowMap.enabled = quality.shadows
     this.instance.shadowMap.type = THREE.PCFSoftShadowMap
-    this.instance.setClearColor('#0b0b12')
+    // Near-black space backdrop — same family as the colony's night sky, so
+    // the two stages feel continuous.
+    this.instance.setClearColor('#040409')
     this.instance.setSize(sizes.width, sizes.height)
     this.instance.setPixelRatio(sizes.pixelRatio)
   }
