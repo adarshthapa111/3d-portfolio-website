@@ -4,10 +4,74 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- ============ SEO ============
+         NOTE: the URLs below assume the site lives at https://adarshthapa.com.np/
+         If you deploy somewhere else, update og:url, og:image, twitter:image,
+         the canonical link, and public/robots.txt + public/sitemap.xml. -->
+    <title>Adarsh Thapa — Frontend Developer | Immersive 3D Portfolio</title>
     <meta
       name="description"
-      content="Adarsh Thapa — Frontend Developer. An immersive 3D portfolio built with Three.js."
+      content="Adarsh Thapa is a Frontend Developer from Kathmandu, Nepal — a Herald College graduate on the road to full-stack. Scroll through an immersive 3D journey: from the solar system, down to Thapa Colony, and into his home built with Three.js."
     />
+    <meta name="author" content="Adarsh Thapa" />
+    <meta name="robots" content="index, follow" />
+    <meta name="theme-color" content="#0b0b12" />
+    <link rel="canonical" href="https://adarshthapa.com.np/" />
+
+    <!-- Open Graph (link previews on Facebook, LinkedIn, WhatsApp, Discord…) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Adarsh Thapa — 3D Portfolio" />
+    <meta property="og:title" content="Adarsh Thapa — Frontend Developer | Immersive 3D Portfolio" />
+    <meta
+      property="og:description"
+      content="An immersive 3D journey from the stars to my home in Thapa Colony — built with Three.js. Frontend Developer from Kathmandu, Nepal."
+    />
+    <meta property="og:url" content="https://adarshthapa.com.np/" />
+    <meta property="og:image" content="https://adarshthapa.com.np/textures/photo/adarsh.png" />
+    <meta property="og:image:alt" content="Adarsh Thapa — Frontend Developer" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter / X card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Adarsh Thapa — Frontend Developer | Immersive 3D Portfolio" />
+    <meta
+      name="twitter:description"
+      content="An immersive 3D journey from the stars to my home in Thapa Colony — built with Three.js."
+    />
+    <meta name="twitter:image" content="https://adarshthapa.com.np/textures/photo/adarsh.png" />
+
+    <!-- Structured data: tells Google exactly WHO this site is about. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Person",
+        "name": "Adarsh Thapa",
+        "jobTitle": "Frontend Developer",
+        "description": "Frontend Developer from Kathmandu, Nepal, working toward full-stack development.",
+        "url": "https://adarshthapa.com.np/",
+        "image": "https://adarshthapa.com.np/textures/photo/adarsh.png",
+        "address": {
+          "@type": "PostalAddress",
+          "addressLocality": "Kathmandu",
+          "addressCountry": "NP"
+        },
+        "alumniOf": [
+          {
+            "@type": "CollegeOrUniversity",
+            "name": "Herald College Kathmandu"
+          }
+        ],
+        "knowsAbout": [
+          "Frontend Development", "React", "Next.js", "TypeScript", "JavaScript",
+          "Three.js", "Tailwind CSS", "Node.js", "Web Development"
+        ],
+        "sameAs": [
+          "https://github.com/Adarsh2003Thapa",
+          "https://adarshthapa.com.np/"
+        ]
+      }
+    </script>
 
     <!-- Fonts: Fraunces (characterful display serif) + Inter (clean UI sans) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -16,10 +80,22 @@
       href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..900;1,9..144,500..900&family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-
-    <title>Adarsh Thapa — 3D Portfolio</title>
   </head>
   <body>
+    <!-- Fallback for crawlers / browsers without JavaScript or WebGL. -->
+    <noscript>
+      <div style="padding: 3rem; max-width: 60ch; margin: 0 auto; text-align: center">
+        <h1>Adarsh Thapa — Frontend Developer</h1>
+        <p>
+          An immersive 3D portfolio built with Three.js — a journey from the solar
+          system down to my home in Kathmandu, Nepal. This experience needs
+          JavaScript and WebGL. Meanwhile, find me on
+          <a href="https://github.com/Adarsh2003Thapa">GitHub</a> or at
+          <a href="https://adarshthapa.com.np/">adarshthapa.com.np</a>.
+        </p>
+      </div>
+    </noscript>
+
     <!-- Loading screen, hidden once assets finish loading. -->
     <div id="loading">
       <p class="loading-label">Entering orbit…</p>
@@ -107,10 +183,10 @@
       <section class="panel align-right" data-section="rooms">
         <div class="panel-content">
           <span class="chapter reveal">Explore</span>
-          <h2 class="reveal">Three Doors</h2>
+          <h2 class="reveal">Four Doors</h2>
           <p class="reveal">
-            Click a locked door to step inside — Skills on the left, Projects
-            straight ahead, and About Me (with my favourite fighters) on the right.
+            Click a door to step inside — Skills on the left, Projects straight
+            ahead, About Me on the right… and one passcode-locked room behind you.
           </p>
           <nav class="links reveal">
             <a href="https://github.com/Adarsh2003Thapa" target="_blank" rel="noopener">GitHub</a>

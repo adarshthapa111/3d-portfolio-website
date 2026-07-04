@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://adarshthapa.com.np/sitemap.xml
