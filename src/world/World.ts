@@ -68,9 +68,5 @@ export default class World {
     if (inSpace) this.solarSystem.update()
     if (inSurface) this.surface.update()
     if (inInterior) this.interior.update()
-
-    // Hands follow the camera from the surface walk through the interior, so
-    // toggle them every frame (not just during the interior stage).
-    this.interior.updateArms(p)
   }
 }

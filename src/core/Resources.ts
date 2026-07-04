@@ -12,11 +12,9 @@ export const MODEL_MANIFEST: Record<string, string[]> = {
     'modern_house-2.glb',
     'vianney_house_2.glb',
     'raven.glb', // the spaceship
-    'first_person_arms.glb', // the hands you walk + explore with
     'street_light.glb', // modern street lights
   ],
   houses: ['new_adarshthapahouse.glb'],
-  sky: ['night_sky_visible_spectrum_monochromatic.glb'], // deep-space star dome
 
   nature: [
     'Tree.glb',

@@ -91,8 +91,7 @@ export default class Navigation {
     const t = this.ease(surfaceT(p))
 
     // First-person walk: stroll down the street at eye level, from the colony
-    // entrance to the house, with a gentle walking bob. (The hands are drawn in
-    // front of the camera — see Interior.updateArms.)
+    // entrance to the house, with a gentle walking bob.
     const z = o.z + THREE.MathUtils.lerp(ROAD_START_Z - 4, HERO_OFFSET.z + 24, t)
     const bob = Math.sin(this.experience.time.elapsed * 0.006) * 0.12
     this.targetPosition.set(o.x, o.y + 5 + bob, z)

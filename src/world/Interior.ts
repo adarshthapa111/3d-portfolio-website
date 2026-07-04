@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import Experience from '../core/Experience'
-import { SPACE_END, SURFACE_END } from './stages'
+import { SURFACE_END } from './stages'
 
 // STAGE 3: inside the house — a central HUB (portrait + dining table) with
 // three LOCKED doors branching in three directions:
@@ -89,7 +89,6 @@ export default class Interior {
   private portrait: { group: THREE.Group; baseY: number } | null = null
   private hoveredProject: THREE.Mesh | null = null
   private spots: THREE.SpotLight[] = []
-  private arms: THREE.Group | null = null
   private textRedraws: (() => void)[] = [] // re-run when web fonts finish loading
 
   private focus: Focus = 'hub'
@@ -546,34 +545,6 @@ export default class Interior {
 
     // Private room (+Z, behind the passcode door): a bed against the far wall.
     this.place('Bed.glb', 0, HUB + PRIV_D - 4.5, Math.PI, 8, 'footprint')
-
-    this.createArms()
-  }
-
-  // First-person arms parented to the camera — only shown inside the house.
-  private createArms() {
-    const src = this.experience.resources.models['first_person_arms.glb']
-    if (!src) return
-    const arms = src.clone(true)
-    const box = new THREE.Box3().setFromObject(arms)
-    const size = box.getSize(new THREE.Vector3())
-    arms.scale.setScalar(2.6 / (Math.max(size.x, size.y, size.z) || 1))
-    arms.rotation.y = Math.PI // face the same way as the camera
-    arms.position.set(0, -1.5, -1.8) // camera space: low + in front
-    arms.visible = false
-    this.experience.camera.instance.add(arms)
-    this.arms = arms
-  }
-
-  // Toggle the first-person hands (shown from the surface walk onward) with a
-  // gentle bob. Called every frame by World (even outside the interior stage).
-  updateArms(p: number) {
-    if (!this.arms) return
-    const show = p >= SPACE_END + 0.02
-    this.arms.visible = show
-    if (show) {
-      this.arms.position.y = -1.5 + Math.sin(this.experience.time.elapsed * 0.004) * 0.05
-    }
   }
 
   private place(file: string, x: number, z: number, rotY: number, target: number, mode: 'footprint' | 'height') {

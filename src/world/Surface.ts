@@ -15,7 +15,6 @@ export const SURFACE_ORIGIN = new THREE.Vector3(0, -1000, 0)
 // Where the hero house sits, relative to SURFACE_ORIGIN (street runs along -Z).
 export const HERO_OFFSET = new THREE.Vector3(0, 0, -84)
 const HERO_FILE = 'new_adarshthapahouse.glb'
-const SKY_FILE = 'night_sky_visible_spectrum_monochromatic.glb'
 
 // The ship's flight over the colony (relative to SURFACE_ORIGIN).
 export const ROAD_START_Z = 96
@@ -69,8 +68,8 @@ export default class Surface {
   }
 
   // A large inward-facing dome with a vertical colour gradient (sky -> horizon).
-  // At night this is a deep navy fading to a faint moonlit horizon; the star
-  // dome (createNightSky) then adds glowing stars on top of it.
+  // At night this is a deep navy fading to a faint moonlit horizon; the point
+  // stars (createStars) and the moon sit on top of it.
   createSky() {
     const sky = new THREE.Mesh(
       new THREE.SphereGeometry(600, 32, 32),
@@ -105,7 +104,7 @@ export default class Surface {
       }),
     )
     sky.position.copy(SURFACE_ORIGIN)
-    sky.renderOrder = -2 // draw before the additive star dome (renderOrder -1)
+    sky.renderOrder = -2 // draw behind everything else in the scene
     this.group.add(sky)
   }
 
@@ -198,62 +197,6 @@ export default class Surface {
     this.group.add(sun)
   }
 
-  // The night sky over the colony: the emissive star dome from the sky model,
-  // composited ADDITIVELY over the dark gradient sky so the stars glow against
-  // the deep-blue night, plus a soft glowing moon high in the sky.
-  private createNightSky() {
-    // The dome is a full-screen additive pass — skip it on low-power devices
-    // (the procedural point-stars carry the starry look on their own).
-    const source = quality.tier === 'high' ? this.experience.resources.models[SKY_FILE] : undefined
-    if (!source) {
-      this.createMoon()
-      return
-    }
-    const dome = source.clone(true)
-
-    // Keep the biggest mesh (the star sphere); hide the small centre spheres.
-    let star: THREE.Mesh | null = null
-    let best = -1
-    dome.traverse((o) => {
-      const m = o as THREE.Mesh
-      if (!m.isMesh) return
-      const s = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3())
-      const r = Math.max(s.x, s.y, s.z)
-      if (r > best) {
-        best = r
-        star = m
-      }
-    })
-    if (!star) return
-    const keep = star as THREE.Mesh
-    dome.traverse((o) => {
-      const m = o as THREE.Mesh
-      if (m.isMesh && m !== keep) m.visible = false
-    })
-
-    // Swap to an unlit, inside-out, additively-blended star texture: black adds
-    // nothing (the gradient shows through) while stars add light and glow.
-    const original = keep.material as THREE.MeshStandardMaterial
-    keep.material = new THREE.MeshBasicMaterial({
-      map: original.emissiveMap ?? original.map ?? null,
-      color: new THREE.Color('#cfd8ff'),
-      side: THREE.BackSide,
-      blending: THREE.AdditiveBlending,
-      transparent: true,
-      depthWrite: false,
-      fog: false,
-    })
-    keep.renderOrder = -1
-
-    const size = new THREE.Box3().setFromObject(dome).getSize(new THREE.Vector3())
-    dome.scale.multiplyScalar(1000 / (Math.max(size.x, size.y, size.z) || 1))
-    const center = new THREE.Box3().setFromObject(dome).getCenter(new THREE.Vector3())
-    dome.position.copy(SURFACE_ORIGIN).sub(center)
-    this.group.add(dome)
-
-    this.createMoon()
-  }
-
   // A detailed moon, framed above the far end of the street so it stays in
   // view during the level walk (no glow halo). The real lunar photo gives the
   // craters + maria; a bump map (same image) adds relief the moonlight rakes
@@ -325,7 +268,7 @@ export default class Surface {
 
   private createSociety() {
     const models = this.experience.resources.models
-    this.createNightSky()
+    this.createMoon()
     this.createStars()
     this.createStreet()
     this.placeHouses(models)

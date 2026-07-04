@@ -81,8 +81,6 @@ export default class Experience {
       { group: solarSystem.group, pos: prevPos, look: new THREE.Vector3(0, 0, 0), fog: null },
     ]
 
-    this.world.interior.updateArms(0.5) // arms visible so their shaders compile too
-
     for (const s of stages) {
       solarSystem.group.visible = s.group === solarSystem.group
       surface.group.visible = s.group === surface.group
@@ -95,7 +93,6 @@ export default class Experience {
       this.renderer.composer.render()
     }
 
-    this.world.interior.updateArms(0)
     this.scene.fog = null
     cam.position.copy(prevPos)
     this.resources.revealScene()
