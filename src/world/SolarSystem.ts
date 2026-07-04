@@ -21,19 +21,24 @@ interface PlanetConfig {
   orbitSpeed: number
   spinSpeed: number
   ring?: boolean
+  color: string // trail / orbit-line colour (the helical "comet tail" look)
+  incline: number // orbital-plane tilt so the system reads as layered 3D
 }
 
 const TEX = '/textures/planets/'
 
 const PLANETS: PlanetConfig[] = [
-  { name: 'Mercury', radius: 0.8, distance: 14, texture: '2k_mercury.jpg', orbitSpeed: 0.30, spinSpeed: 0.3 },
-  { name: 'Venus', radius: 1.3, distance: 20, texture: '2k_venus_surface.jpg', orbitSpeed: 0.22, spinSpeed: 0.2 },
-  { name: 'Mars', radius: 1.1, distance: 36, texture: '2k_mars.jpg', orbitSpeed: 0.16, spinSpeed: 0.4 },
-  { name: 'Jupiter', radius: 3.6, distance: 52, texture: '2k_jupiter.jpg', orbitSpeed: 0.10, spinSpeed: 0.6 },
-  { name: 'Saturn', radius: 3.0, distance: 68, texture: '2k_saturn.jpg', orbitSpeed: 0.08, spinSpeed: 0.6, ring: true },
-  { name: 'Uranus', radius: 2.2, distance: 82, texture: '2k_uranus.jpg', orbitSpeed: 0.06, spinSpeed: 0.4 },
-  { name: 'Neptune', radius: 2.1, distance: 94, texture: '2k_neptune.jpg', orbitSpeed: 0.05, spinSpeed: 0.4 },
+  { name: 'Mercury', radius: 0.8, distance: 14, texture: '2k_mercury.jpg', orbitSpeed: 0.30, spinSpeed: 0.3, color: '#7ad7f0', incline: 0.10 },
+  { name: 'Venus', radius: 1.3, distance: 20, texture: '2k_venus_surface.jpg', orbitSpeed: 0.22, spinSpeed: 0.2, color: '#f0b455', incline: -0.14 },
+  { name: 'Mars', radius: 1.1, distance: 36, texture: '2k_mars.jpg', orbitSpeed: 0.16, spinSpeed: 0.4, color: '#ff7a59', incline: 0.18 },
+  { name: 'Jupiter', radius: 3.6, distance: 52, texture: '2k_jupiter.jpg', orbitSpeed: 0.10, spinSpeed: 0.6, color: '#ffb347', incline: -0.08 },
+  { name: 'Saturn', radius: 3.0, distance: 68, texture: '2k_saturn.jpg', orbitSpeed: 0.08, spinSpeed: 0.6, ring: true, color: '#ffd97a', incline: 0.12 },
+  { name: 'Uranus', radius: 2.2, distance: 82, texture: '2k_uranus.jpg', orbitSpeed: 0.06, spinSpeed: 0.4, color: '#7af0d0', incline: -0.20 },
+  { name: 'Neptune', radius: 2.1, distance: 94, texture: '2k_neptune.jpg', orbitSpeed: 0.05, spinSpeed: 0.4, color: '#6f8cff', incline: 0.16 },
 ]
+
+const EARTH_COLOR = '#6fc3ff'
+const EARTH_INCLINE = 0.1
 
 const EARTH_DISTANCE = 28
 const EARTH_ANGLE = Math.PI * 0.18
@@ -131,6 +136,39 @@ export default class SolarSystem {
     )
     this.group.add(sun)
 
+    // The sun's PATH through the galaxy — a long golden line through it (like
+    // the helical solar-system visualisations), brightest at the sun and
+    // fading out toward both ends.
+    const dir = new THREE.Vector3(1, 0.3, -0.35).normalize()
+    const N = 80
+    const positions = new Float32Array((N + 1) * 3)
+    const colors = new Float32Array((N + 1) * 3)
+    const gold = new THREE.Color('#ffce6b')
+    for (let i = 0; i <= N; i++) {
+      const t = (i / N) * 2 - 1 // -1 .. 1 along the path
+      positions[i * 3] = dir.x * t * 150
+      positions[i * 3 + 1] = dir.y * t * 150
+      positions[i * 3 + 2] = dir.z * t * 150
+      const fade = (1 - Math.abs(t)) ** 1.5
+      colors[i * 3] = gold.r * fade
+      colors[i * 3 + 1] = gold.g * fade
+      colors[i * 3 + 2] = gold.b * fade
+    }
+    const pathGeo = new THREE.BufferGeometry()
+    pathGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    pathGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    this.group.add(
+      new THREE.Line(
+        pathGeo,
+        new THREE.LineBasicMaterial({
+          vertexColors: true,
+          blending: THREE.AdditiveBlending,
+          transparent: true,
+          depthWrite: false,
+        }),
+      ),
+    )
+
     // A light at the sun lights every planet. decay:0 = no distance falloff,
     // so far planets aren't pitch black; the direction still creates Earth's
     // day/night terminator.
@@ -149,10 +187,17 @@ export default class SolarSystem {
 
   createPlanets() {
     for (const cfg of PLANETS) {
+      // Each planet gets its own TILTED orbital plane, so the system reads as
+      // a layered, three-dimensional swirl instead of one flat disc.
+      const plane = new THREE.Group()
+      plane.rotation.x = cfg.incline
+      plane.rotation.z = cfg.incline * 0.6
+      this.group.add(plane)
+
       // A pivot at the origin; rotating it sweeps the planet around its orbit.
       const pivot = new THREE.Group()
       pivot.rotation.y = Math.random() * Math.PI * 2
-      this.group.add(pivot)
+      plane.add(pivot)
 
       const mesh = new THREE.Mesh(
         new THREE.SphereGeometry(cfg.radius, 48, 48),
@@ -167,9 +212,47 @@ export default class SolarSystem {
 
       if (cfg.ring) mesh.add(this.makeSaturnRing(cfg.radius))
 
-      this.addOrbitLine(cfg.distance)
+      // Glowing comet-tail trail that follows the planet (parented to the
+      // pivot, so it sweeps round with zero per-frame cost), over a faint
+      // full-orbit line in the same colour.
+      pivot.add(this.makeTrail(cfg.distance, cfg.color))
+      plane.add(this.makeOrbitLine(cfg.distance, cfg.color, 0.16))
+
       this.orbits.push({ pivot, mesh, cfg })
     }
+  }
+
+  // A fading arc of light BEHIND a planet — the helical "comet tail" look.
+  // Built once along the orbit circle ending at the planet's local position;
+  // vertex colours fade to black, and additive blending turns black into
+  // invisible, so the tail glows and dissolves.
+  private makeTrail(distance: number, color: string, span = 1.6) {
+    const N = 64
+    const positions = new Float32Array((N + 1) * 3)
+    const colors = new Float32Array((N + 1) * 3)
+    const c = new THREE.Color(color)
+    for (let i = 0; i <= N; i++) {
+      const a = (i / N) * span // 0 = at the planet, span = far behind it
+      positions[i * 3] = Math.cos(a) * distance
+      positions[i * 3 + 1] = 0
+      positions[i * 3 + 2] = Math.sin(a) * distance
+      const fade = (1 - i / N) ** 2
+      colors[i * 3] = c.r * fade
+      colors[i * 3 + 1] = c.g * fade
+      colors[i * 3 + 2] = c.b * fade
+    }
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    return new THREE.Line(
+      geo,
+      new THREE.LineBasicMaterial({
+        vertexColors: true,
+        blending: THREE.AdditiveBlending,
+        transparent: true,
+        depthWrite: false,
+      }),
+    )
   }
 
   makeSaturnRing(planetRadius: number) {
@@ -202,19 +285,18 @@ export default class SolarSystem {
     return ring
   }
 
-  // A faint circle showing a planet's orbit path.
-  addOrbitLine(distance: number) {
+  // A faint circle showing a planet's orbit path, in the planet's own colour.
+  private makeOrbitLine(distance: number, color = '#3a4a6b', opacity = 0.4) {
     const points: THREE.Vector3[] = []
     const segments = 128
     for (let i = 0; i <= segments; i++) {
       const a = (i / segments) * Math.PI * 2
       points.push(new THREE.Vector3(Math.cos(a) * distance, 0, Math.sin(a) * distance))
     }
-    const line = new THREE.LineLoop(
+    return new THREE.LineLoop(
       new THREE.BufferGeometry().setFromPoints(points),
-      new THREE.LineBasicMaterial({ color: '#3a4a6b', transparent: true, opacity: 0.4 }),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity }),
     )
-    this.group.add(line)
   }
 
   createEarth() {
@@ -229,13 +311,22 @@ export default class SolarSystem {
     const moonMap = loader.load('/textures/planets/moon_1024.jpg')
     moonMap.colorSpace = THREE.SRGBColorSpace
 
+    // Earth's own tilted orbital plane (like the other planets).
+    const plane = new THREE.Group()
+    plane.rotation.x = EARTH_INCLINE
+    plane.rotation.z = EARTH_INCLINE * 0.6
+    this.group.add(plane)
+
     // A pivot at the sun that we rotate to orbit Earth; the Earth sits out at
     // its orbital radius inside it, with an axial tilt.
     const earthPivot = new THREE.Group()
     earthPivot.rotation.y = EARTH_ANGLE
-    this.group.add(earthPivot)
+    plane.add(earthPivot)
     this.earthPivot = earthPivot
-    this.addOrbitLine(EARTH_DISTANCE)
+    // Bright blue comet-tail + orbit ring — Earth is the star of the journey,
+    // so its trail reads slightly stronger than the others.
+    earthPivot.add(this.makeTrail(EARTH_DISTANCE, EARTH_COLOR, 1.9))
+    plane.add(this.makeOrbitLine(EARTH_DISTANCE, EARTH_COLOR, 0.22))
 
     const earthGroup = new THREE.Group()
     earthGroup.position.set(EARTH_DISTANCE, 0, 0)
